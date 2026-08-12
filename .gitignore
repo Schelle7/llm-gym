@@ -1,2 +1,7 @@
-/__pycache__
+/checkpoints/
+/logs/
 /llm_gym.egg-info
+langgraph.png
+__pycache__
+/frontend/node_modules/
+/frontend/dist/

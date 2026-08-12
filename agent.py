@@ -1,49 +1,40 @@
-import json
+import os
 
-from config import MAX_ITERATIONS, MODEL, client, create_messages
-from tools import tool_definitions, tool_registry
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from config import SYSTEM_PROMPT
+from graph import build_graph
 
 
-def run_agent(user_prompt):
-    messages = create_messages(user_prompt)
-
-    for iteration in range(MAX_ITERATIONS):
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=tool_definitions,
-            tool_choice="auto",
-        )
-        assistant_message = response.choices[0].message
-        print(f"Model response {iteration + 1}: {assistant_message}")
-        messages.append(assistant_message.model_dump(exclude_none=True))
-
-        if not assistant_message.tool_calls:
-            print(assistant_message.content)
-            return
-
-        for tool_call in assistant_message.tool_calls:
-            tool_name = tool_call.function.name
-            tool_arguments = json.loads(tool_call.function.arguments)
-            tool_function = tool_registry[tool_name]
-            tool_result = tool_function(**tool_arguments)
-            print(f"Tool call: {tool_name}({tool_arguments})")
-            print(f"Tool result: {tool_result}")
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(tool_result),
-                }
-            )
-
-    raise RuntimeError("The model exceeded the maximum number of tool iterations")
+def run_agent(graph, user_prompt, thread_id):
+    result = graph.invoke(
+        {
+            "messages": [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt),
+            ]
+        },
+        {"configurable": {"thread_id": thread_id}},
+    )
+    print("result-message content:", result["messages"][-1].content)
 
 
 def main():
-    while True:
-        user_prompt = input("Write prompt: ")
-        run_agent(user_prompt)
+    with SqliteSaver.from_conn_string("checkpoints/checkpoints.db") as checkpointer:
+        graph = build_graph(checkpointer)
+        thread_id = datetime.now(timezone.utc).strftime("%Y_%m_%d_%H_%M_%S") + f"_{uuid4()}"
+        print(f"LangSmith tracing: {os.getenv('LANGSMITH_TRACING', '<unset>')}")
+        print(f"LangSmith project: {os.getenv('LANGSMITH_PROJECT', '<unset>')}")
+        print(f"LangSmith API key set: {'yes' if os.getenv('LANGSMITH_API_KEY') else 'no'}")
+        print(f"Started thread: {thread_id}")
+        while True:
+            user_prompt = input("Write prompt: ")
+            if user_prompt == "exit":
+                break
+            run_agent(graph, user_prompt, thread_id)
 
 
 if __name__ == "__main__":

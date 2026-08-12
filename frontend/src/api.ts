@@ -1,0 +1,115 @@
+export type AgentEvent =
+  | { type: "assistant_delta"; text: string }
+  | { type: "file_read"; path: string }
+  | {
+      type: "proposal_ready";
+      path: string;
+      content_hash: string;
+      original: string;
+      modified: string;
+    }
+  | { type: "approval_required" }
+  | {
+      type: "file_saved";
+      path: string;
+      content: string;
+      content_hash: string;
+    }
+  | { type: "run_finished" };
+
+export interface FileSnapshot {
+  path: string;
+  content: string;
+  content_hash: string;
+}
+
+export interface Proposal {
+  path: string;
+  contentHash: string;
+  original: string;
+  modified: string;
+}
+
+export async function fetchFile(): Promise<FileSnapshot> {
+  const response = await fetch("/api/file");
+  if (!response.ok) {
+    throw new Error(`Unable to load file: ${response.status}`);
+  }
+  return response.json() as Promise<FileSnapshot>;
+}
+
+export async function putFile(
+  path: string,
+  expectedHash: string,
+  content: string,
+): Promise<FileSnapshot> {
+  const response = await fetch("/api/file", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, expected_hash: expectedHash, content }),
+  });
+  if (!response.ok) {
+    throw new Error(`Unable to save file: ${response.status}`);
+  }
+  return response.json() as Promise<FileSnapshot>;
+}
+
+/** Read an SSE body, handing each parsed event to onEvent as it arrives. */
+async function readEventStream(
+  response: Response,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  if (!response.ok || response.body === null) {
+    throw new Error(`Stream failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const result = await reader.read();
+    if (result.done) {
+      break;
+    }
+    buffer += decoder.decode(result.value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop()!;
+    for (const frame of frames) {
+      const data = frame.split("\n").find((line) => line.startsWith("data: "))!;
+      onEvent(JSON.parse(data.slice(6)) as AgentEvent);
+    }
+  }
+}
+
+export async function streamRun(
+  prompt: string,
+  signal: AbortSignal,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+    signal,
+  });
+  await readEventStream(response, onEvent);
+}
+
+/**
+ * Submit the human's decision. This resumes the paused agent run, so the
+ * agent can keep talking afterwards -- hence a stream, not a single reply.
+ */
+export async function streamDecision(
+  decision: "accept" | "reject",
+  signal: AbortSignal,
+  onEvent: (event: AgentEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/decision", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+    signal,
+  });
+  await readEventStream(response, onEvent);
+}
