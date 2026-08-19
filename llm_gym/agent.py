@@ -5,8 +5,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from config import SYSTEM_PROMPT
-from graph import build_graph
+from llm_gym.config import CHECKPOINT_DB, SYSTEM_PROMPT
+from llm_gym.graph import build_graph
 
 
 def run_agent(graph, user_prompt, thread_id):
@@ -23,7 +23,7 @@ def run_agent(graph, user_prompt, thread_id):
 
 
 def main():
-    with SqliteSaver.from_conn_string("checkpoints/checkpoints.db") as checkpointer:
+    with SqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         graph = build_graph(checkpointer)
         thread_id = datetime.now(timezone.utc).strftime("%Y_%m_%d_%H_%M_%S") + f"_{uuid4()}"
         print(f"LangSmith tracing: {os.getenv('LANGSMITH_TRACING', '<unset>')}")

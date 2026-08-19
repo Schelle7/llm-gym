@@ -11,9 +11,8 @@ dev:
 	$(MAKE) --jobs=2 dev-backend dev-frontend
 
 dev-backend:
-	python -m uvicorn server.app:app --reload \
-		--reload-exclude 'test_workspace/*' \
-		--reload-exclude 'logs/*'
+	python -m uvicorn llm_gym.server.app:app --reload \
+		--reload-dir llm_gym
 
 dev-frontend:
 	npm --prefix frontend run dev

@@ -16,5 +16,5 @@ dependencies = [
     "uvicorn>=0.35",
 ]
 
-[tool.setuptools]
-py-modules = []
+[tool.setuptools.packages.find]
+include = ["llm_gym*"]

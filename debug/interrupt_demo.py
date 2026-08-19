@@ -22,6 +22,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from llm_gym.config import CHECKPOINT_DB
+
 
 class State(TypedDict):
     log: list[str]
@@ -70,7 +72,7 @@ builder.add_edge("finish", END)
 # A checkpointer is REQUIRED for interrupt() -- the paused state must live
 # somewhere. InMemorySaver keeps it in RAM (fine here); agent.py uses
 # SqliteSaver, which would survive a process restart.
-with SqliteSaver.from_conn_string("checkpoints/checkpoints.db") as checkpointer:
+with SqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
     graph = builder.compile(checkpointer=checkpointer)
 
     # The resume calls MUST use the same thread_id, or there is no paused run

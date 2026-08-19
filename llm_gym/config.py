@@ -1,8 +1,11 @@
 from pathlib import Path
 
-WORKSPACE_ROOT = Path(__file__).resolve().parent / "test_workspace"
+# Repo root: this file lives in llm_gym/, so go up one level.
+ROOT = Path(__file__).resolve().parents[1]
+
+WORKSPACE_ROOT = ROOT / "test_workspace"
 WORKSPACE_FILE = Path("hello.py")
-CHECKPOINT_DB = str(Path(__file__).resolve().parent / "checkpoints" / "checkpoints.db")
+CHECKPOINT_DB = str(ROOT / "checkpoints" / "checkpoints.db")
 
 MODEL = "gemma4:e2b"
 SYSTEM_PROMPT = (

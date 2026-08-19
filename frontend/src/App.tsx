@@ -1,7 +1,7 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { Check, Circle, FileCode2, Play, RotateCcw, Save, Square, X } from "lucide-react";
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { AgentEvent, Proposal, fetchFile, putFile, streamDecision, streamRun } from "./api";
+import { SyntheticEvent, useEffect, useRef, useState } from "react";
+import { AgentEvent, Proposal, fetchFile, fetchFiles, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
 
@@ -26,17 +26,30 @@ function App() {
   const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [runState, setRunState] = useState<RunState>("loading");
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [files, setFiles] = useState<string[]>([]);
   const abortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    fetchFiles().then(setFiles);
     fetchFile().then((file) => {
-      setPath(file.path);
-      setContent(file.content);
-      setSavedContent(file.content);
-      setContentHash(file.content_hash);
+      showFile(file);
       setRunState("idle");
     });
   }, []);
+
+  function showFile(file: { path: string; content: string; content_hash: string }) {
+    setPath(file.path);
+    setContent(file.content);
+    setSavedContent(file.content);
+    setContentHash(file.content_hash);
+  }
+
+  async function openFile(wanted: string) {
+    if (wanted === path || isDirty || runState !== "idle") {
+      return;
+    }
+    showFile(await fetchFile(wanted));
+  }
 
   function handleAgentEvent(event: AgentEvent) {
     if (event.type === "assistant_delta") {
@@ -62,15 +75,21 @@ function App() {
     if (event.type === "approval_required") {
       setRunState("awaiting_approval");
     }
+    if (event.type === "agent_error") {
+      setMessages((current) => [
+        ...current,
+        { role: "system", text: `Tool failed: ${event.detail}` },
+      ]);
+    }
     if (event.type === "file_saved") {
-      setPath(event.path);
-      setContent(event.content);
-      setSavedContent(event.content);
-      setContentHash(event.content_hash);
+      // Follow whatever file the agent just touched, and pick up any file
+      // it created.
+      showFile(event);
+      void fetchFiles().then(setFiles);
     }
   }
 
-  async function startRun(event: FormEvent) {
+  async function startRun(event: SyntheticEvent) {
     event.preventDefault();
     await submitPrompt();
   }
@@ -115,9 +134,7 @@ function App() {
     setRunState("saving");
     try {
       const file = await putFile(path, contentHash, content);
-      setContent(file.content);
-      setSavedContent(file.content);
-      setContentHash(file.content_hash);
+      showFile(file);
       setMessages((current) => [...current, { role: "system", text: `${file.path} saved to disk.` }]);
       setRunState("idle");
     } catch (error) {
@@ -195,11 +212,44 @@ function App() {
       </header>
 
       <section className="workspace">
+        <nav className="file-pane">
+          <div className="pane-header">
+            <strong>Files</strong>
+            <span>{files.length}</span>
+          </div>
+          {isDirty && (
+            <p className="file-hint">
+              Save <strong>{path}</strong> before opening another file.
+            </p>
+          )}
+          <ul className="file-list">
+            {files.map((entry) => (
+              <li key={entry}>
+                <button
+                  type="button"
+                  className={`file-item${entry === path ? " file-item-active" : ""}`}
+                  onClick={() => void openFile(entry)}
+                  disabled={isDirty || runState !== "idle"}
+                  title={isDirty ? "Save your changes before switching files" : entry}
+                >
+                  <FileCode2 size={13} />
+                  <span>{entry}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
         <section className="editor-pane">
           <div className="pane-header">
-            <div className="file-name"><FileCode2 size={16} />{path || "Loading file..."}</div>
+            <div className="file-name">
+              <FileCode2 size={16} />
+              {/* While reviewing, name the file the proposal touches -- it is
+                  not necessarily the one currently open in the editor. */}
+              {isReviewing ? proposal.path : path || "Loading file..."}
+            </div>
             {isReviewing ? (
-              <span>Review proposal</span>
+              <span>{proposal.original === "" ? "Review new file" : "Review proposal"}</span>
             ) : (
               <button
                 className={`button-save${isDirty ? " button-save-dirty" : ""}`}

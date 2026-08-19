@@ -1,1 +1,0 @@
-Small experiments help reveal how the agent makes decisions.

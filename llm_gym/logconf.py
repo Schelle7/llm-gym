@@ -7,9 +7,10 @@ Everything the agent does goes to logs/agent.log; the console stays quiet so
 """
 
 import logging
-from pathlib import Path
 
-LOG_DIR = Path(__file__).resolve().parent / "logs"
+from llm_gym.config import ROOT
+
+LOG_DIR = ROOT / "logs"
 LOG_FILE = LOG_DIR / "agent.log"
 
 log = logging.getLogger("llm_gym")

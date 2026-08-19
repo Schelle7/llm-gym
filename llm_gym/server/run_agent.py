@@ -7,9 +7,9 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import Command
 
-from config import SYSTEM_PROMPT
-from logconf import log
-from workspace import Workspace
+from llm_gym.config import SYSTEM_PROMPT
+from llm_gym.logconf import log
+from llm_gym.workspace import Workspace, WorkspaceError
 
 
 def new_thread_id() -> str:
@@ -81,22 +81,60 @@ class AgentRunner:
                         name = getattr(message, "name", None)
                         log.info("tool <- %s returned %s", name, message.content)
 
-                        if name == "read_file":
-                            yield sse({"type": "file_read", "path": self._path_of(message)})
+                        result = self._tool_result(message)
+                        path = result.get("path", "")
 
-                        # propose_edit has returned, so the write (if any) is
-                        # already on disk. Report it now rather than after the
-                        # model's follow-up turn, which takes seconds.
-                        elif name == "propose_edit":
-                            snapshot = self.workspace.read_snapshot()
-                            yield sse(
-                                {
-                                    "type": "file_saved",
-                                    "path": snapshot.path,
-                                    "content": snapshot.content,
-                                    "content_hash": snapshot.content_hash,
-                                }
-                            )
+                        if name == "read_file" and path:
+                            yield sse({"type": "file_read", "path": path})
+
+                        elif name in ("propose_edit", "create_file"):
+                            status = result.get("status")
+
+                            # The tool has returned, so an accepted change is
+                            # already on disk. Report it now rather than after
+                            # the model's follow-up turn, which takes seconds.
+                            if status == "accepted":
+                                snapshot = self.workspace.read_snapshot(path)
+                                yield sse(
+                                    {
+                                        "type": "file_saved",
+                                        "path": snapshot.path,
+                                        "content": snapshot.content,
+                                        "content_hash": snapshot.content_hash,
+                                    }
+                                )
+                            elif status == "failed":
+                                yield sse(
+                                    {
+                                        "type": "agent_error",
+                                        "detail": result.get("detail", "Unknown error"),
+                                    }
+                                )
+                            elif status == "rejected":
+                                # No event needed: the browser sent this
+                                # decision itself and nothing on disk changed.
+                                continue
+                            else:
+                                # Either the tool raised and ToolNode replaced
+                                # its result with an error string, or a new
+                                # status was added without updating this
+                                # branch. Report it before raising, so the
+                                # browser is told rather than left hanging on
+                                # a truncated stream.
+                                log.error("unhandled %s result: %s", name, result)
+                                yield sse(
+                                    {
+                                        "type": "agent_error",
+                                        "detail": (
+                                            f"{name} returned an unexpected "
+                                            f"status: {status!r}"
+                                        ),
+                                    }
+                                )
+                                raise RuntimeError(
+                                    f"Unexpected {name} result: {result!r} "
+                                    f"(raw: {message.content!r})"
+                                )
 
         # The stream ends either because the graph finished or because a tool
         # called interrupt(). Asking for the state is a reliable way to tell
@@ -118,9 +156,16 @@ class AgentRunner:
         else:
             yield sse({"type": "run_finished"})
 
-    def _path_of(self, message) -> str:
-        """Tool results arrive as JSON strings; fall back to the known path."""
+    def _tool_result(self, message) -> dict[str, Any]:
+        """Parse a tool's return value back out of its ToolMessage.
+
+        LangGraph hands tool results over as ToolMessage.content, a string.
+        Our tools all return dicts, so this decodes one to build frontend
+        events from -- the model gets the tool's value directly and never
+        sees this. Returns {} when the content is not a JSON object.
+        """
         try:
-            return json.loads(message.content).get("path", "")
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            return self.workspace.relative_path.as_posix()
+            parsed = json.loads(message.content)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}

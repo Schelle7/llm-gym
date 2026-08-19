@@ -2,7 +2,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from graph import build_graph
+from llm_gym.graph import build_graph
 
 
 OUTPUT_PATH = Path("langgraph.png")

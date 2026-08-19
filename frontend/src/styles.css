@@ -52,7 +52,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(340px, 0.75fr);
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1.65fr) minmax(340px, 0.75fr);
   height: calc(100vh - 98px);
   max-width: 1560px;
   min-height: 580px;
@@ -61,8 +61,36 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   border: 1px solid var(--line);
 }
 
-.editor-pane, .chat-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.file-pane, .editor-pane, .chat-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.file-pane { border-right: 1px solid var(--line); }
 .editor-pane { border-right: 1px solid var(--line); }
+.file-pane .pane-header strong { font-size: 12px; }
+.file-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 6px 0; list-style: none; }
+.file-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--ink);
+  font: 400 12px "DM Mono";
+  text-align: left;
+}
+.file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item:hover:not(:disabled) { background: var(--line); }
+.file-item:disabled { color: var(--muted); cursor: default; }
+.file-item-active { color: var(--accent); font-weight: 500; }
+.file-hint {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.file-hint strong { color: var(--ink); font: 500 11px "DM Mono"; }
 .pane-header { height: 45px; flex: 0 0 45px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .pane-header > span { color: var(--muted); font: 400 10px "DM Mono"; text-transform: uppercase; }
 .file-name { display: flex; align-items: center; gap: 8px; font: 500 12px "DM Mono"; }
@@ -91,7 +119,8 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 @media (max-width: 800px) {
   .app-shell { padding: 0; }
   .topbar { border-left: 0; border-right: 0; }
-  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 1fr) minmax(360px, 0.8fr); height: auto; min-height: calc(100vh - 62px); border-left: 0; border-right: 0; }
+  .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr) minmax(360px, 0.8fr); height: auto; min-height: calc(100vh - 62px); border-left: 0; border-right: 0; }
+  .file-pane { border-right: 0; border-bottom: 1px solid var(--line); max-height: 180px; }
   .editor-pane { border-right: 0; border-bottom: 1px solid var(--line); }
   .review-bar { align-items: flex-start; flex-direction: column; }
   .review-actions { width: 100%; }

@@ -4,17 +4,19 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from config import CHECKPOINT_DB, WORKSPACE_FILE, WORKSPACE_ROOT
-from graph import build_graph
-from logconf import setup_logging
-from server.run_agent import AgentRunner, new_thread_id
-from server.schemas import DecisionRequest, RunRequest, SaveRequest
-from workspace import FileSnapshot, Workspace
+from llm_gym.config import CHECKPOINT_DB, WORKSPACE_FILE, WORKSPACE_ROOT
+from llm_gym.graph import build_graph
+from llm_gym.logconf import setup_logging
+from llm_gym.server.run_agent import AgentRunner, new_thread_id
+from llm_gym.server.schemas import DecisionRequest, RunRequest, SaveRequest
+from llm_gym.workspace import FileSnapshot, Workspace
 
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
-workspace = Workspace(root=WORKSPACE_ROOT, relative_path=WORKSPACE_FILE)
+workspace = Workspace(root=WORKSPACE_ROOT)
+# Which file the editor opens on load. A UI concern, not a workspace one.
+DEFAULT_FILE = WORKSPACE_FILE.as_posix()
 runner: AgentRunner | None = None
 
 
@@ -37,9 +39,14 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="LLM Gym API", lifespan=lifespan)
 
 
+@app.get("/api/files")
+def list_files() -> list[str]:
+    return workspace.list_files()
+
+
 @app.get("/api/file")
-def read_file() -> FileSnapshot:
-    return workspace.read_snapshot()
+def read_file(path: str = DEFAULT_FILE) -> FileSnapshot:
+    return workspace.read_snapshot(path)
 
 
 @app.put("/api/file")

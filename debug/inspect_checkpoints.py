@@ -2,10 +2,8 @@ import sys
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from graph import build_graph
-
-
-CHECKPOINT_DB = "checkpoints/checkpoints.db"
+from llm_gym.config import CHECKPOINT_DB
+from llm_gym.graph import build_graph
 
 
 def main():

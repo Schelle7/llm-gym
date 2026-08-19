@@ -15,6 +15,7 @@ export type AgentEvent =
       content: string;
       content_hash: string;
     }
+  | { type: "agent_error"; detail: string }
   | { type: "run_finished" };
 
 export interface FileSnapshot {
@@ -30,8 +31,18 @@ export interface Proposal {
   modified: string;
 }
 
-export async function fetchFile(): Promise<FileSnapshot> {
-  const response = await fetch("/api/file");
+export async function fetchFiles(): Promise<string[]> {
+  const response = await fetch("/api/files");
+  if (!response.ok) {
+    throw new Error(`Unable to list files: ${response.status}`);
+  }
+  return response.json() as Promise<string[]>;
+}
+
+/** Load a file. Omit `path` to get the workspace's default file. */
+export async function fetchFile(path?: string): Promise<FileSnapshot> {
+  const query = path === undefined ? "" : `?path=${encodeURIComponent(path)}`;
+  const response = await fetch(`/api/file${query}`);
   if (!response.ok) {
     throw new Error(`Unable to load file: ${response.status}`);
   }

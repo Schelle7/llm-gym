@@ -1,1 +1,0 @@
-The language model studies a new task one step at a time.

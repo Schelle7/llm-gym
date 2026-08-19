@@ -1,7 +1,7 @@
 from langchain_openai import ChatOpenAI
 
-from config import MODEL
-from tools import tools
+from llm_gym.config import MODEL
+from llm_gym.tools import tools
 
 
 model = ChatOpenAI(

@@ -2,9 +2,9 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from logconf import log
-from model import model
-from tools import tools
+from llm_gym.logconf import log
+from llm_gym.model import model
+from llm_gym.tools import tools
 
 
 def call_model(state):
@@ -25,7 +25,9 @@ def build_graph(checkpointer: BaseCheckpointSaver):
     builder = StateGraph(MessagesState)
     builder.add_node("agent", call_model)
     builder.add_node("tools", ToolNode(tools))
+
     builder.add_edge(START, "agent")
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")
+    
     return builder.compile(checkpointer=checkpointer)
