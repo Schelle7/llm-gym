@@ -7,8 +7,18 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from llm_gym.config import CHECKPOINT_DB, WORKSPACE_FILE, WORKSPACE_ROOT
 from llm_gym.graph import build_graph
 from llm_gym.logconf import setup_logging
-from llm_gym.server.run_agent import AgentRunner, new_thread_id
-from llm_gym.server.schemas import DecisionRequest, RunRequest, SaveRequest
+from llm_gym.server.run_agent import (
+    AgentRunner,
+    list_thread_ids,
+    new_thread_id,
+    thread_created_at,
+)
+from llm_gym.server.schemas import (
+    DecisionRequest,
+    RunRequest,
+    SaveRequest,
+    ThreadSummary,
+)
 from llm_gym.workspace import FileSnapshot, Workspace
 
 
@@ -26,17 +36,47 @@ async def lifespan(_: FastAPI):
 
     The checkpointer is what lets a run paused at propose_edit's interrupt()
     be resumed by a later, separate request.
+
+    Deliberately no thread: conversation identity belongs to the browser, so
+    that a restart -- including the hot reload that fires on every save under
+    llm_gym/ -- cannot silently strand the conversation you were having.
     """
     global runner
     setup_logging()
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
-        runner = AgentRunner(workspace, build_graph(checkpointer), new_thread_id())
-        print(f"Agent thread: {runner.thread_id}")
+        runner = AgentRunner(workspace, build_graph(checkpointer))
         yield
         runner = None
 
 
+def _summary(thread_id: str) -> ThreadSummary:
+    return ThreadSummary(id=thread_id, created_at=thread_created_at(thread_id))
+
+
 app = FastAPI(title="LLM Gym API", lifespan=lifespan)
+
+
+@app.get("/api/threads")
+def get_threads() -> list[ThreadSummary]:
+    """Every thread with at least one checkpoint, newest first.
+
+    A thread minted by POST /api/threads shows up here only once something
+    has run in it, since an unused thread has written no checkpoint yet.
+    """
+    summaries = [_summary(thread_id) for thread_id in list_thread_ids(CHECKPOINT_DB)]
+    # Two stable passes: newest first, then push undatable ids to the bottom.
+    # Anything the debug scripts wrote (debug/interrupt_demo.py uses the id
+    # "demo-thread") has no timestamp and would otherwise sort by name.
+    summaries.sort(key=lambda summary: summary.created_at or "", reverse=True)
+    summaries.sort(key=lambda summary: summary.created_at is None)
+    return summaries
+
+
+@app.post("/api/threads")
+def create_thread() -> ThreadSummary:
+    """Mint a thread id for the browser to hold. Nothing is written here --
+    the first run against this id is what creates it in the database."""
+    return _summary(new_thread_id())
 
 
 @app.get("/api/files")
@@ -61,7 +101,7 @@ def save_file(request: SaveRequest) -> FileSnapshot:
 @app.post("/api/run")
 async def start_run(request: RunRequest) -> StreamingResponse:
     return StreamingResponse(
-        runner.run(request.prompt),
+        runner.run(request.thread_id, request.prompt),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -73,7 +113,7 @@ async def submit_decision(request: DecisionRequest) -> StreamingResponse:
     so this streams like a run instead of returning a single snapshot.
     """
     return StreamingResponse(
-        runner.resume(request.decision),
+        runner.resume(request.thread_id, request.decision),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

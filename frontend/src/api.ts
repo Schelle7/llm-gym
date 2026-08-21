@@ -31,6 +31,31 @@ export interface Proposal {
   modified: string;
 }
 
+/** A conversation. `created_at` is ISO-8601 UTC, or null for an id the
+ *  server did not mint and therefore cannot date. */
+export interface ThreadSummary {
+  id: string;
+  created_at: string | null;
+}
+
+export async function fetchThreads(): Promise<ThreadSummary[]> {
+  const response = await fetch("/api/threads");
+  if (!response.ok) {
+    throw new Error(`Unable to list threads: ${response.status}`);
+  }
+  return response.json() as Promise<ThreadSummary[]>;
+}
+
+/** Mint a new thread. The server stores nothing until the first run, so the
+ *  browser is what keeps this id alive. */
+export async function createThread(): Promise<ThreadSummary> {
+  const response = await fetch("/api/threads", { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Unable to create thread: ${response.status}`);
+  }
+  return response.json() as Promise<ThreadSummary>;
+}
+
 export async function fetchFiles(): Promise<string[]> {
   const response = await fetch("/api/files");
   if (!response.ok) {
@@ -94,6 +119,7 @@ async function readEventStream(
 }
 
 export async function streamRun(
+  threadId: string,
   prompt: string,
   signal: AbortSignal,
   onEvent: (event: AgentEvent) => void,
@@ -101,7 +127,7 @@ export async function streamRun(
   const response = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ thread_id: threadId, prompt }),
     signal,
   });
   await readEventStream(response, onEvent);
@@ -112,6 +138,7 @@ export async function streamRun(
  * agent can keep talking afterwards -- hence a stream, not a single reply.
  */
 export async function streamDecision(
+  threadId: string,
   decision: "accept" | "reject",
   signal: AbortSignal,
   onEvent: (event: AgentEvent) => void,
@@ -119,7 +146,7 @@ export async function streamDecision(
   const response = await fetch("/api/decision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ thread_id: threadId, decision }),
     signal,
   });
   await readEventStream(response, onEvent);

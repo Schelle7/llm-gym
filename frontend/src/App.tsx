@@ -1,7 +1,7 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
-import { Check, Circle, FileCode2, Play, RotateCcw, Save, Square, X } from "lucide-react";
+import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, X } from "lucide-react";
 import { SyntheticEvent, useEffect, useRef, useState } from "react";
-import { AgentEvent, Proposal, fetchFile, fetchFiles, putFile, streamDecision, streamRun } from "./api";
+import { AgentEvent, Proposal, ThreadSummary, createThread, fetchFile, fetchFiles, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
 
@@ -17,6 +17,41 @@ const INITIAL_MESSAGES: Message[] = [
   },
 ];
 
+// The browser owns which conversation it is in, so a server restart -- or the
+// hot reload that fires on every save under llm_gym/ -- cannot change it.
+const THREAD_KEY = "llm-gym.thread";
+
+function loadStoredThread(): ThreadSummary | null {
+  const raw = localStorage.getItem(THREAD_KEY);
+  if (raw === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as ThreadSummary;
+  } catch {
+    return null;
+  }
+}
+
+/** Thread ids are unreadable, so list them by the moment they were created. */
+function threadLabel(entry: ThreadSummary): string {
+  if (entry.created_at === null) {
+    return entry.id;
+  }
+  const created = new Date(entry.created_at);
+  if (Number.isNaN(created.getTime())) {
+    return entry.id;
+  }
+  return created.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function App() {
   const [path, setPath] = useState("");
   const [content, setContent] = useState("");
@@ -27,15 +62,32 @@ function App() {
   const [runState, setRunState] = useState<RunState>("loading");
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [files, setFiles] = useState<string[]>([]);
+  const [thread, setThread] = useState<ThreadSummary | null>(loadStoredThread);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const abortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchFiles().then(setFiles);
+    fetchThreads().then(setThreads);
     fetchFile().then((file) => {
       showFile(file);
       setRunState("idle");
     });
   }, []);
+
+  function adoptThread(next: ThreadSummary) {
+    localStorage.setItem(THREAD_KEY, JSON.stringify(next));
+    setThread(next);
+  }
+
+  async function startThread() {
+    if (runState !== "idle") {
+      return;
+    }
+    adoptThread(await createThread());
+    setMessages(INITIAL_MESSAGES);
+    setProposal(null);
+  }
 
   function showFile(file: { path: string; content: string; content_hash: string }) {
     setPath(file.path);
@@ -99,6 +151,9 @@ function App() {
     if (submittedPrompt.length === 0 || runState !== "idle" || content !== savedContent) {
       return;
     }
+    if (thread === null) {
+      return;
+    }
 
     const controller = new AbortController();
     abortController.current = controller;
@@ -108,8 +163,11 @@ function App() {
     setProposal(null);
 
     try {
-      await streamRun(submittedPrompt, controller.signal, handleAgentEvent);
+      await streamRun(thread.id, submittedPrompt, controller.signal, handleAgentEvent);
       setRunState((current) => current === "streaming" ? "idle" : current);
+      // This run may be what wrote the thread's first checkpoint, which is
+      // what makes it appear in the list at all.
+      void fetchThreads().then(setThreads);
     } catch (error) {
       if (controller.signal.aborted) {
         setMessages((current) => [...current, { role: "system", text: "Run stopped." }]);
@@ -144,6 +202,9 @@ function App() {
   }
 
   async function decide(decision: "accept" | "reject") {
+    if (thread === null) {
+      return;
+    }
     const controller = new AbortController();
     abortController.current = controller;
     setMessages((current) => [
@@ -161,7 +222,7 @@ function App() {
     // Resuming the paused run: the agent sees the decision as a tool result
     // and may keep going, so this streams just like starting a run does.
     try {
-      await streamDecision(decision, controller.signal, handleAgentEvent);
+      await streamDecision(thread.id, decision, controller.signal, handleAgentEvent);
       setRunState((current) => (current === "streaming" ? "idle" : current));
     } catch (error) {
       if (controller.signal.aborted) {
@@ -182,6 +243,12 @@ function App() {
   const isRunning = runState === "streaming";
   const isReviewing = runState === "awaiting_approval" && proposal !== null;
   const isDirty = content !== savedContent;
+  // A brand new thread has no checkpoint yet, so the server cannot list it.
+  // Show it anyway -- it is the one you are talking to.
+  const threadList =
+    thread !== null && !threads.some((entry) => entry.id === thread.id)
+      ? [thread, ...threads]
+      : threads;
 
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
@@ -324,8 +391,8 @@ function App() {
                   void submitPrompt();
                 }
               }}
-              placeholder="Ask for a change. Enter to send, Shift+Enter for a new line."
-              disabled={isRunning || isReviewing}
+              placeholder={thread === null ? "Start a thread to send a message." : "Ask for a change. Enter to send, Shift+Enter for a new line."}
+              disabled={isRunning || isReviewing || thread === null}
               rows={3}
             />
             <div className="composer-footer">
@@ -335,11 +402,46 @@ function App() {
               ) : runState === "failed" || runState === "stopped" ? (
                 <button className="button-secondary" type="button" onClick={resetRun}><RotateCcw size={15} />Reset</button>
               ) : (
-                <button className="button-primary" type="submit" disabled={runState !== "idle" || isDirty}><Play size={15} fill="currentColor" />Send</button>
+                <button className="button-primary" type="submit" disabled={runState !== "idle" || isDirty || thread === null}><Play size={15} fill="currentColor" />Send</button>
               )}
             </div>
           </form>
         </aside>
+
+        <nav className="thread-pane">
+          <div className="pane-header">
+            <strong>Threads</strong>
+            <button
+              type="button"
+              className="button-new-thread"
+              onClick={() => void startThread()}
+              disabled={runState !== "idle"}
+              title="Start a new thread"
+            >
+              <Plus size={14} />
+              New
+            </button>
+          </div>
+          {thread === null && (
+            <p className="file-hint">
+              No thread yet. Press <strong>New</strong> to start one.
+            </p>
+          )}
+          <ul className="file-list">
+            {threadList.map((entry) => (
+              <li key={entry.id}>
+                {/* Not selectable yet: this pane only shows what exists. */}
+                <span
+                  className={`thread-item${entry.id === thread?.id ? " thread-item-active" : ""}`}
+                  title={entry.id}
+                >
+                  <MessageSquare size={13} />
+                  <span>{threadLabel(entry)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </section>
     </main>
   );
