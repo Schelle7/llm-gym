@@ -1,21 +1,59 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
-import { Check, Circle, FileCode2, Play, RotateCcw, Save, Square, X } from "lucide-react";
+import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Trash2, X } from "lucide-react";
 import { SyntheticEvent, useEffect, useRef, useState } from "react";
-import { AgentEvent, Proposal, fetchFile, fetchFiles, putFile, streamDecision, streamRun } from "./api";
+import { AgentEvent, ChatItem, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchModels, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
 
-interface Message {
-  role: "user" | "assistant" | "system";
-  text: string;
+// The chat shows the conversation as the checkpoint records it, and nothing
+// else. Anything the graph never saw -- a failed request, a save conflict,
+// the backend being down -- goes to the notice strip instead, so that what
+// you watch and what a reload rebuilds are the same thing.
+type Message = ChatItem;
+
+// Rows that show the graph working rather than someone speaking: one line
+// each, wrench-marked, sharing the agent's lane down the left.
+const MACHINERY_ROLES = new Set<ChatItem["role"]>([
+  "tool_call",
+  "tool_result",
+  "system",
+]);
+
+// The browser owns which conversation it is in, so a server restart -- or the
+// hot reload that fires on every save under llm_gym/ -- cannot change it.
+const THREAD_KEY = "llm-gym.thread";
+const MODEL_KEY = "llm-gym.model";
+
+function loadStoredThread(): ThreadSummary | null {
+  const raw = localStorage.getItem(THREAD_KEY);
+  if (raw === null) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as ThreadSummary;
+  } catch {
+    return null;
+  }
 }
 
-const INITIAL_MESSAGES: Message[] = [
-  {
-    role: "system",
-    text: "Ask for a change to run the agent through the file-read, streaming, and approval flow.",
-  },
-];
+/** Thread ids are unreadable, so list them by the moment they were created. */
+function threadLabel(entry: ThreadSummary): string {
+  if (entry.created_at === null) {
+    return entry.id;
+  }
+  const created = new Date(entry.created_at);
+  if (Number.isNaN(created.getTime())) {
+    return entry.id;
+  }
+  return created.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
 
 function App() {
   const [path, setPath] = useState("");
@@ -23,19 +61,183 @@ function App() {
   const [savedContent, setSavedContent] = useState("");
   const [contentHash, setContentHash] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [runState, setRunState] = useState<RunState>("loading");
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [files, setFiles] = useState<string[]>([]);
+  // Empty until /api/models answers, which is what settles the selection too:
+  // the server owns the catalogue, so the browser never invents an id.
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState("");
+  const [thread, setThread] = useState<ThreadSummary | null>(loadStoredThread);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  // Transient trouble that never reached the graph, so has no place in the
+  // transcript. Cleared whenever the next attempt starts.
+  const [notice, setNotice] = useState<string | null>(null);
+  // Raw tokens from the agent node, shown while they arrive and thrown away
+  // once the finished message lands.
+  const [streaming, setStreaming] = useState("");
   const abortController = useRef<AbortController | null>(null);
+  const streamBox = useRef<HTMLDivElement | null>(null);
+  const transcript = useRef<HTMLDivElement | null>(null);
+  // Whether the transcript was sitting at the bottom when the last message
+  // arrived. Held in a ref rather than state because it has to be read as it
+  // was *before* the new content rendered: measured afterwards it is always
+  // false, and the view would never follow.
+  const atBottom = useRef(true);
 
   useEffect(() => {
-    fetchFiles().then(setFiles);
-    fetchFile().then((file) => {
-      showFile(file);
-      setRunState("idle");
-    });
+    // Follow the tail: the box is capped at about five lines, so the top
+    // scrolls away rather than the newest tokens being hidden below.
+    if (streamBox.current !== null) {
+      streamBox.current.scrollTop = streamBox.current.scrollHeight;
+    }
+  }, [streaming]);
+
+  useEffect(() => {
+    // `streaming` belongs here even though the box sits outside the
+    // transcript: it appears and disappears below the pane, which changes the
+    // pane's height and pushes the newest row out of view.
+    if (transcript.current !== null && atBottom.current) {
+      transcript.current.scrollTop = transcript.current.scrollHeight;
+    }
+  }, [messages, streaming]);
+
+  function trackScroll() {
+    const pane = transcript.current;
+    if (pane === null) {
+      return;
+    }
+    // A threshold rather than equality: scroll heights are fractional, and a
+    // reader two pixels off the end still means "at the bottom".
+    atBottom.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
+  }
+
+  useEffect(() => {
+    void bootstrap();
   }, []);
+
+  async function bootstrap() {
+    try {
+      void fetchFiles().then(setFiles);
+      void fetchThreads().then(setThreads);
+      // Awaited, not fired off: a run started before this lands would have no
+      // model to send.
+      const catalogue = await fetchModels();
+      setModels(catalogue.models);
+      const storedModel = localStorage.getItem(MODEL_KEY);
+      setModel(
+        storedModel !== null && catalogue.models.includes(storedModel)
+          ? storedModel
+          : catalogue.default,
+      );
+      showFile(await fetchFile());
+
+      // The stored thread may still be mid-review on the server. loadThread
+      // decides the run state, so it has to settle after the file arrives
+      // rather than racing it.
+      const stored = loadStoredThread();
+      if (stored === null) {
+        setRunState("idle");
+        return;
+      }
+      await loadThread(stored);
+    } catch (error) {
+      // `make dev` starts both halves at once and Vite wins by a second or
+      // so, so a page loaded in that gap gets refused by a backend still
+      // booting. Say so, rather than sitting on "loading" forever.
+      setNotice(`Backend not reachable: ${error}. Reload the page.`);
+      setRunState("failed");
+    }
+  }
+
+  /** Rebuild the chat for a thread from its checkpoint, and pick up any
+   *  proposal it is still waiting on. */
+  async function loadThread(entry: ThreadSummary) {
+    setNotice(null);
+    // Otherwise a thread you had scrolled up in leaves the next one opening
+    // part-way through its history.
+    atBottom.current = true;
+    try {
+      const state = await fetchThreadState(entry.id);
+      setMessages(state.chat);
+
+      if (state.pending_proposal === null) {
+        setProposal(null);
+        setRunState("idle");
+        return;
+      }
+      // A run was left suspended inside propose_edit. Restoring the diff is
+      // what puts the accept/reject buttons back, and they are the only way
+      // to resume it.
+      setProposal({
+        path: state.pending_proposal.path,
+        contentHash: state.pending_proposal.content_hash,
+        original: state.pending_proposal.original,
+        modified: state.pending_proposal.modified,
+      });
+      setRunState("awaiting_approval");
+    } catch (error) {
+      setMessages([]);
+      setNotice(`Could not load that thread: ${error}`);
+      setProposal(null);
+      setRunState("idle");
+    }
+  }
+
+  function adoptThread(next: ThreadSummary) {
+    localStorage.setItem(THREAD_KEY, JSON.stringify(next));
+    setThread(next);
+  }
+
+  async function selectThread(entry: ThreadSummary) {
+    if (entry.id === thread?.id || runState !== "idle") {
+      return;
+    }
+    adoptThread(entry);
+    await loadThread(entry);
+  }
+
+  async function removeThread(entry: ThreadSummary) {
+    if (runState !== "idle") {
+      return;
+    }
+    // Nothing here is recoverable, and the checkpoints are the only record
+    // a conversation ever had.
+    if (!window.confirm(`Delete the thread from ${threadLabel(entry)}? This cannot be undone.`)) {
+      return;
+    }
+
+    setNotice(null);
+    try {
+      await deleteThread(entry.id);
+      setThreads(await fetchThreads());
+    } catch (error) {
+      setNotice(`Could not delete that thread: ${error}`);
+      return;
+    }
+
+    if (entry.id === thread?.id) {
+      localStorage.removeItem(THREAD_KEY);
+      setThread(null);
+      setMessages([]);
+      setProposal(null);
+    }
+  }
+
+  async function startThread() {
+    if (runState !== "idle") {
+      return;
+    }
+    try {
+      const created = await createThread();
+      adoptThread(created);
+      // Empty, but it still has to clear whatever the last thread left up.
+      await loadThread(created);
+    } catch (error) {
+      setNotice(`Could not start a thread: ${error}`);
+    }
+  }
 
   function showFile(file: { path: string; content: string; content_hash: string }) {
     setPath(file.path);
@@ -52,17 +254,23 @@ function App() {
   }
 
   function handleAgentEvent(event: AgentEvent) {
-    if (event.type === "assistant_delta") {
-      setMessages((current) => {
-        const last = current[current.length - 1];
-        if (last.role === "assistant") {
-          return [...current.slice(0, -1), { ...last, text: last.text + event.text }];
-        }
-        return [...current, { role: "assistant", text: event.text }];
-      });
+    if (event.type === "agent_delta") {
+      // Provisional, and deliberately kept out of the message list. Because
+      // it never becomes a chat row there is nothing to reconcile later: the
+      // finished message simply arrives as its own chat_item.
+      setStreaming((current) => current + event.text);
     }
-    if (event.type === "file_read") {
-      setMessages((current) => [...current, { role: "system", text: `Read ${event.path}` }]);
+    if (event.type === "chat_item") {
+      // The node finished, so whatever the box was showing is now superseded
+      // by this. Cleared every time round the agent -> tools loop, not once
+      // at the end of the run.
+      setStreaming("");
+      const item = { role: event.role, text: event.text, detail: event.detail, model: event.model };
+      // The system prompt opens a thread, but it reaches us after the browser
+      // has already put the user's own row up, so appending would invert them.
+      setMessages((current) =>
+        item.role === "system_prompt" ? [item, ...current] : [...current, item],
+      );
     }
     if (event.type === "proposal_ready") {
       setProposal({
@@ -76,10 +284,10 @@ function App() {
       setRunState("awaiting_approval");
     }
     if (event.type === "agent_error") {
-      setMessages((current) => [
-        ...current,
-        { role: "system", text: `Tool failed: ${event.detail}` },
-      ]);
+      // A tool that merely returned a failure is already in the transcript
+      // via chat_item. This is the other kind: the server could not build an
+      // event it wanted to send, which the checkpoint knows nothing about.
+      setNotice(event.detail);
     }
     if (event.type === "file_saved") {
       // Follow whatever file the agent just touched, and pick up any file
@@ -99,26 +307,37 @@ function App() {
     if (submittedPrompt.length === 0 || runState !== "idle" || content !== savedContent) {
       return;
     }
+    if (thread === null) {
+      return;
+    }
 
     const controller = new AbortController();
     abortController.current = controller;
     setMessages((current) => [...current, { role: "user", text: submittedPrompt }]);
     setPrompt("");
+    setNotice(null);
     setRunState("streaming");
     setProposal(null);
 
     try {
-      await streamRun(submittedPrompt, controller.signal, handleAgentEvent);
+      await streamRun(thread.id, model, submittedPrompt, controller.signal, handleAgentEvent);
       setRunState((current) => current === "streaming" ? "idle" : current);
+      // This run may be what wrote the thread's first checkpoint, which is
+      // what makes it appear in the list at all.
+      void fetchThreads().then(setThreads);
     } catch (error) {
       if (controller.signal.aborted) {
-        setMessages((current) => [...current, { role: "system", text: "Run stopped." }]);
+        // The status pill already reads "stopped".
         setRunState("stopped");
         setProposal(null);
         return;
       }
-      setMessages((current) => [...current, { role: "system", text: String(error) }]);
+      setNotice(`The run failed: ${error}`);
       setRunState("failed");
+    } finally {
+      // Half-written tokens were never committed to the transcript, so a run
+      // that stopped or failed leaves nothing behind.
+      setStreaming("");
     }
   }
 
@@ -131,50 +350,54 @@ function App() {
       return;
     }
 
+    setNotice(null);
     setRunState("saving");
     try {
-      const file = await putFile(path, contentHash, content);
-      showFile(file);
-      setMessages((current) => [...current, { role: "system", text: `${file.path} saved to disk.` }]);
+      // No chat line: your save never reaches the graph, so it would vanish
+      // on reload. The Save button going quiet is the confirmation.
+      showFile(await putFile(path, contentHash, content));
       setRunState("idle");
     } catch (error) {
-      setMessages((current) => [...current, { role: "system", text: String(error) }]);
-      setRunState("failed");
+      // Usually the hash conflict from workspace.apply_change. Stay idle so
+      // the edit is still there to retry or reconcile.
+      setNotice(String(error));
+      setRunState("idle");
     }
   }
 
   async function decide(decision: "accept" | "reject") {
+    if (thread === null) {
+      return;
+    }
     const controller = new AbortController();
     abortController.current = controller;
-    setMessages((current) => [
-      ...current,
-      {
-        role: "system",
-        text: decision === "accept"
-          ? "Proposal accepted and written to disk."
-          : "Proposal rejected. The file was not changed.",
-      },
-    ]);
+    // No line announcing the decision: the resumed tool returns its own
+    // "accepted"/"rejected" result, which is what lands in the checkpoint
+    // and comes back through the projection a moment later.
     setProposal(null);
+    setNotice(null);
     setRunState("streaming");
 
     // Resuming the paused run: the agent sees the decision as a tool result
     // and may keep going, so this streams just like starting a run does.
     try {
-      await streamDecision(decision, controller.signal, handleAgentEvent);
+      await streamDecision(thread.id, model, decision, controller.signal, handleAgentEvent);
       setRunState((current) => (current === "streaming" ? "idle" : current));
     } catch (error) {
       if (controller.signal.aborted) {
-        setMessages((current) => [...current, { role: "system", text: "Run stopped." }]);
         setRunState("stopped");
         return;
       }
-      setMessages((current) => [...current, { role: "system", text: String(error) }]);
+      setNotice(`Could not submit the decision: ${error}`);
       setRunState("failed");
+    } finally {
+      setStreaming("");
     }
   }
 
   function resetRun() {
+    setNotice(null);
+    setStreaming("");
     setRunState("idle");
     setProposal(null);
   }
@@ -182,6 +405,12 @@ function App() {
   const isRunning = runState === "streaming";
   const isReviewing = runState === "awaiting_approval" && proposal !== null;
   const isDirty = content !== savedContent;
+  // A brand new thread has no checkpoint yet, so the server cannot list it.
+  // Show it anyway -- it is the one you are talking to.
+  const threadList =
+    thread !== null && !threads.some((entry) => entry.id === thread.id)
+      ? [thread, ...threads]
+      : threads;
 
   useEffect(() => {
     function handleSaveShortcut(event: KeyboardEvent) {
@@ -218,11 +447,11 @@ function App() {
             <span>{files.length}</span>
           </div>
           {isDirty && (
-            <p className="file-hint">
+            <p className="pane-hint">
               Save <strong>{path}</strong> before opening another file.
             </p>
           )}
-          <ul className="file-list">
+          <ul className="pane-list">
             {files.map((entry) => (
               <li key={entry}>
                 <button
@@ -263,6 +492,14 @@ function App() {
               </button>
             )}
           </div>
+          {notice !== null && (
+            <div className="notice">
+              <span>{notice}</span>
+              <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss">
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <div className="editor-surface">
             {isReviewing ? (
               <DiffEditor
@@ -305,14 +542,36 @@ function App() {
             <strong>Conversation</strong>
             <span>Agent</span>
           </div>
-          <div className="messages">
-            {messages.map((message, index) => (
-              <article className={`message message-${message.role}`} key={`${message.role}-${index}`}>
-                <span>{message.role}</span>
-                <p>{message.text}</p>
-              </article>
-            ))}
+          <div className="messages" ref={transcript} onScroll={trackScroll}>
+            {messages.map((message, index) => {
+              const machinery = MACHINERY_ROLES.has(message.role);
+              return (
+                <article
+                  // detail is set only where the server clipped the text, so
+                  // the help cursor never promises more than there is.
+                  className={[
+                    "message",
+                    `message-${message.role}`,
+                    machinery ? "message-machinery" : "",
+                    message.detail ? "message-detailed" : "",
+                  ].join(" ")}
+                  key={`${message.role}-${index}`}
+                  title={message.detail ?? undefined}
+                >
+                  <span>
+                    {machinery ? "🔧" : message.role}
+                    {message.model && <em className="message-model">{message.model}</em>}
+                  </span>
+                  <p>{message.text}</p>
+                </article>
+              );
+            })}
           </div>
+          {streaming !== "" && (
+            <div className="stream-box" ref={streamBox}>
+              <pre>{streaming}</pre>
+            </div>
+          )}
           <form className="composer" onSubmit={startRun}>
             <textarea
               aria-label="Message"
@@ -324,22 +583,89 @@ function App() {
                   void submitPrompt();
                 }
               }}
-              placeholder="Ask for a change. Enter to send, Shift+Enter for a new line."
-              disabled={isRunning || isReviewing}
+              placeholder={thread === null ? "Start a thread to send a message." : "Ask for a change. Enter to send, Shift+Enter for a new line."}
+              disabled={isRunning || isReviewing || thread === null}
               rows={3}
             />
             <div className="composer-footer">
-              <span>Local agent</span>
+              {/* Enabled while a proposal is under review, unlike everything
+                  else here: handing another model the decision is the point. */}
+              <select
+                aria-label="Model"
+                className="model-picker"
+                value={model}
+                onChange={(event) => {
+                  setModel(event.target.value);
+                  localStorage.setItem(MODEL_KEY, event.target.value);
+                }}
+                disabled={models.length === 0 || isRunning}
+              >
+                {models.map((entry) => (
+                  <option key={entry} value={entry}>
+                    {entry}
+                  </option>
+                ))}
+              </select>
               {isRunning ? (
                 <button className="button-stop" type="button" onClick={stopRun} title="Stop run"><Square size={15} />Stop</button>
               ) : runState === "failed" || runState === "stopped" ? (
                 <button className="button-secondary" type="button" onClick={resetRun}><RotateCcw size={15} />Reset</button>
               ) : (
-                <button className="button-primary" type="submit" disabled={runState !== "idle" || isDirty}><Play size={15} fill="currentColor" />Send</button>
+                <button className="button-primary" type="submit" disabled={runState !== "idle" || isDirty || thread === null}><Play size={15} fill="currentColor" />Send</button>
               )}
             </div>
           </form>
         </aside>
+
+        <nav className="thread-pane">
+          <div className="pane-header">
+            <strong>Threads</strong>
+            <button
+              type="button"
+              className="button-new-thread"
+              onClick={() => void startThread()}
+              disabled={runState !== "idle"}
+              title="Start a new thread"
+            >
+              <Plus size={14} />
+              New
+            </button>
+          </div>
+          {thread === null && (
+            <p className="pane-hint">
+              No thread yet. Press <strong>New</strong> to start one.
+            </p>
+          )}
+          <ul className="pane-list">
+            {threadList.map((entry) => (
+              <li
+                key={entry.id}
+                className={`thread-row${entry.id === thread?.id ? " thread-row-active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className={`thread-item${entry.id === thread?.id ? " thread-item-active" : ""}`}
+                  onClick={() => void selectThread(entry)}
+                  disabled={runState !== "idle"}
+                  title={runState === "idle" ? entry.id : "Finish the current run before switching threads"}
+                >
+                  <MessageSquare size={13} />
+                  <span>{threadLabel(entry)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="thread-delete"
+                  onClick={() => void removeThread(entry)}
+                  disabled={runState !== "idle"}
+                  title="Delete this thread"
+                  aria-label={`Delete the thread from ${threadLabel(entry)}`}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </section>
     </main>
   );

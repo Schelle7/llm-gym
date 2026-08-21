@@ -8,8 +8,11 @@
   --paper: #f7f6f1;
   --ink: #24231f;
   --muted: #77746b;
+  /* Still clearly secondary, but readable at 11px in the transcript. */
+  --muted-strong: #5c5951;
   --line: #d5d1c7;
   --accent: #e45735;
+  --agent: #2f6f9f;
   --dark: #1e1f1c;
 }
 
@@ -52,7 +55,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1.65fr) minmax(340px, 0.75fr);
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1.65fr) minmax(340px, 0.75fr) minmax(215px, 0.52fr);
   height: calc(100vh - 98px);
   max-width: 1560px;
   min-height: 580px;
@@ -61,11 +64,12 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   border: 1px solid var(--line);
 }
 
-.file-pane, .editor-pane, .chat-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.file-pane, .editor-pane, .chat-pane, .thread-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .file-pane { border-right: 1px solid var(--line); }
 .editor-pane { border-right: 1px solid var(--line); }
-.file-pane .pane-header strong { font-size: 12px; }
-.file-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 6px 0; list-style: none; }
+.chat-pane { border-right: 1px solid var(--line); }
+.file-pane .pane-header strong, .thread-pane .pane-header strong { font-size: 12px; }
+.pane-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 6px 0; list-style: none; }
 .file-item {
   width: 100%;
   display: flex;
@@ -81,7 +85,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .file-item:hover:not(:disabled) { background: var(--line); }
 .file-item:disabled { color: var(--muted); cursor: default; }
 .file-item-active { color: var(--accent); font-weight: 500; }
-.file-hint {
+.pane-hint {
   flex: 0 0 auto;
   margin: 0;
   padding: 10px 14px;
@@ -90,7 +94,55 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font-size: 11px;
   line-height: 1.5;
 }
-.file-hint strong { color: var(--ink); font: 500 11px "DM Mono"; }
+.pane-hint strong { color: var(--ink); font: 500 11px "DM Mono"; }
+.thread-row { display: flex; align-items: center; }
+.thread-row:hover { background: var(--line); }
+.thread-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 14px;
+  background: transparent;
+  color: var(--muted);
+  font: 400 11px "DM Mono";
+  text-align: left;
+}
+.thread-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-item svg { flex: 0 0 auto; }
+.thread-item:hover:not(:disabled) { color: var(--ink); }
+.thread-item-active { color: var(--accent); font-weight: 500; }
+/* Hidden with visibility, not opacity: the global button:disabled rule sets
+   opacity and would out-specify a hiding rule here. */
+.thread-delete {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+  color: var(--muted);
+  background: transparent;
+  visibility: hidden;
+}
+.thread-row:hover .thread-delete,
+.thread-row:focus-within .thread-delete,
+.thread-row-active .thread-delete { visibility: visible; }
+.thread-delete:hover:not(:disabled) { color: #b42318; }
+.button-new-thread {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: transparent;
+  font: 500 10px "DM Mono";
+  text-transform: uppercase;
+}
+.button-new-thread:hover:not(:disabled) { color: white; background: var(--accent); }
+.button-new-thread:disabled { opacity: 0.4; cursor: default; }
 .pane-header { height: 45px; flex: 0 0 45px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .pane-header > span { color: var(--muted); font: 400 10px "DM Mono"; text-transform: uppercase; }
 .file-name { display: flex; align-items: center; gap: 8px; font: 500 12px "DM Mono"; }
@@ -104,13 +156,91 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .message { margin: 0 0 18px; }
 .message > span { display: block; margin-bottom: 6px; color: var(--muted); font: 500 10px "DM Mono"; text-transform: uppercase; }
 .message p { margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-.message-user { padding-left: 20px; border-left: 2px solid var(--accent); }
-.message-system p { color: var(--muted); font-size: 12px; }
+.message-detailed { cursor: help; }
+.message-model { margin-left: 6px; color: var(--agent); font-size: 10px; font-style: normal; text-transform: none; opacity: 0.7; }
+
+/* A rule down one side, not a bubble on one side: the prose stays left in
+   both, so only the marker and its label move. */
+.message-user { padding-right: 20px; border-right: 2px solid var(--accent); }
+.message-user > span { color: var(--accent); text-align: right; }
+
+.message-agent { padding-left: 20px; border-left: 2px solid var(--agent); }
+.message-agent > span { color: var(--agent); }
+
+/* Machinery rows: one line each, wrench-marked instead of role-labelled, and
+   sharing the agent's left lane so the transcript reads as two columns. */
+.message-machinery {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding-left: 20px;
+  border-left: 2px solid var(--line);
+}
+.message-machinery > span { flex: 0 0 auto; margin: 0; font-size: 12px; }
+.message-machinery p {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font: 400 11px "DM Mono";
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* A request comes off the agent node's tool_calls, so it carries the agent's
+   colour. Its result comes back from the tools node, so it does not: the
+   alternation between the two colours is one agent -> tools superstep. */
+.message-tool_call { border-left-color: var(--agent); }
+
+/* The system prompt: one row, whole body in the title attribute. */
+.message-system_prompt { padding: 6px 10px; border: 1px dashed var(--line); }
+.message-system_prompt > span { margin-bottom: 3px; }
+.message-system_prompt p {
+  overflow: hidden;
+  color: var(--muted-strong);
+  font: 400 11px "DM Mono";
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #fbeae7;
+  color: #8a2318;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.notice button { display: grid; place-items: center; color: inherit; background: transparent; }
+
+/* Provisional output, dashed to say so. Capped at roughly five lines, with
+   the scroll pinned to the bottom so the top scrolls away instead. */
+.stream-box {
+  flex: 0 0 auto;
+  max-height: 82px;
+  overflow-y: auto;
+  margin: 0 14px 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--agent);
+}
+.stream-box pre {
+  margin: 0;
+  color: var(--muted-strong);
+  font: 400 11px/1.5 "DM Mono";
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .composer { margin: 0 14px 14px; border: 1px solid #bdb9ae; background: white; }
 .composer textarea { display: block; width: 100%; resize: none; border: 0; outline: 0; padding: 12px; color: var(--ink); background: transparent; font-size: 13px; line-height: 1.5; }
 .composer-footer { min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 6px; border-top: 1px solid #ebe8df; }
-.composer-footer > span { padding-left: 6px; color: var(--muted); font: 400 9px "DM Mono"; text-transform: uppercase; }
+.model-picker { padding: 4px 6px; color: var(--muted); font: 400 10px "DM Mono"; background: transparent; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.model-picker:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); }
+.model-picker:disabled { opacity: 0.5; cursor: default; }
 .button-primary, .button-secondary, .button-stop { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; font-size: 11px; font-weight: 700; }
 .button-primary { color: white; background: var(--ink); }
 .button-secondary { color: var(--ink); background: #e8e5dc; }
@@ -119,9 +249,11 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 @media (max-width: 800px) {
   .app-shell { padding: 0; }
   .topbar { border-left: 0; border-right: 0; }
-  .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr) minmax(360px, 0.8fr); height: auto; min-height: calc(100vh - 62px); border-left: 0; border-right: 0; }
+  .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(420px, 1fr) minmax(360px, 0.8fr) auto; height: auto; min-height: calc(100vh - 62px); border-left: 0; border-right: 0; }
   .file-pane { border-right: 0; border-bottom: 1px solid var(--line); max-height: 180px; }
   .editor-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+  .chat-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+  .thread-pane { max-height: 180px; }
   .review-bar { align-items: flex-start; flex-direction: column; }
   .review-actions { width: 100%; }
   .review-actions button { flex: 1; }

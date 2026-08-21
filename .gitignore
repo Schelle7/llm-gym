@@ -6,3 +6,5 @@ __pycache__
 /frontend/node_modules/
 /frontend/dist/
 .idea
+/test_workspace/*
+!/test_workspace/hello.py
