@@ -38,12 +38,51 @@ export interface ThreadSummary {
   created_at: string | null;
 }
 
+/** One line of a rebuilt conversation. Only text so far -- tool calls and
+ *  file changes still have no rendering. */
+export interface ChatItem {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface ThreadState {
+  chat: ChatItem[];
+  pending_proposal: {
+    path: string;
+    content_hash: string;
+    original: string;
+    modified: string;
+  } | null;
+}
+
+/** Rebuild a thread from its checkpoint. For loading and switching threads;
+ *  a running thread is fed by the stream instead. */
+export async function fetchThreadState(threadId: string): Promise<ThreadState> {
+  const query = `?thread_id=${encodeURIComponent(threadId)}`;
+  const response = await fetch(`/api/state${query}`);
+  if (!response.ok) {
+    throw new Error(`Unable to load thread: ${response.status}`);
+  }
+  return response.json() as Promise<ThreadState>;
+}
+
 export async function fetchThreads(): Promise<ThreadSummary[]> {
   const response = await fetch("/api/threads");
   if (!response.ok) {
     throw new Error(`Unable to list threads: ${response.status}`);
   }
   return response.json() as Promise<ThreadSummary[]>;
+}
+
+/** Discard a thread and its checkpoints. Permanent, and does not touch any
+ *  file the agent wrote. */
+export async function deleteThread(threadId: string): Promise<void> {
+  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`Unable to delete thread: ${response.status}`);
+  }
 }
 
 /** Mint a new thread. The server stores nothing until the first run, so the

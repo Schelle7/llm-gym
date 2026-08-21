@@ -52,7 +52,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1.65fr) minmax(340px, 0.75fr) minmax(165px, 0.4fr);
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1.65fr) minmax(340px, 0.75fr) minmax(215px, 0.52fr);
   height: calc(100vh - 98px);
   max-width: 1560px;
   min-height: 580px;
@@ -66,7 +66,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .editor-pane { border-right: 1px solid var(--line); }
 .chat-pane { border-right: 1px solid var(--line); }
 .file-pane .pane-header strong, .thread-pane .pane-header strong { font-size: 12px; }
-.file-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 6px 0; list-style: none; }
+.pane-list { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 6px 0; list-style: none; }
 .file-item {
   width: 100%;
   display: flex;
@@ -82,7 +82,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .file-item:hover:not(:disabled) { background: var(--line); }
 .file-item:disabled { color: var(--muted); cursor: default; }
 .file-item-active { color: var(--accent); font-weight: 500; }
-.file-hint {
+.pane-hint {
   flex: 0 0 auto;
   margin: 0;
   padding: 10px 14px;
@@ -91,20 +91,42 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font-size: 11px;
   line-height: 1.5;
 }
-.file-hint strong { color: var(--ink); font: 500 11px "DM Mono"; }
-/* Threads are listed but not yet selectable, so these are spans, not buttons. */
+.pane-hint strong { color: var(--ink); font: 500 11px "DM Mono"; }
+.thread-row { display: flex; align-items: center; }
+.thread-row:hover { background: var(--line); }
 .thread-item {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
+  padding: 6px 4px 6px 14px;
+  background: transparent;
   color: var(--muted);
   font: 400 11px "DM Mono";
+  text-align: left;
 }
 .thread-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-item svg { flex: 0 0 auto; }
+.thread-item:hover:not(:disabled) { color: var(--ink); }
 .thread-item-active { color: var(--accent); font-weight: 500; }
+/* Hidden with visibility, not opacity: the global button:disabled rule sets
+   opacity and would out-specify a hiding rule here. */
+.thread-delete {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 8px;
+  color: var(--muted);
+  background: transparent;
+  visibility: hidden;
+}
+.thread-row:hover .thread-delete,
+.thread-row:focus-within .thread-delete,
+.thread-row-active .thread-delete { visibility: visible; }
+.thread-delete:hover:not(:disabled) { color: #b42318; }
 .button-new-thread {
   height: 26px;
   display: inline-flex;

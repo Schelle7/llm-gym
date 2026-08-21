@@ -11,6 +11,8 @@ from langgraph.types import Command
 
 from llm_gym.config import SYSTEM_PROMPT
 from llm_gym.logconf import log
+from llm_gym.server.history import render_messages
+from llm_gym.server.schemas import ProposalPayload, ThreadState
 from llm_gym.workspace import Workspace, WorkspaceError
 
 # Thread ids start with a UTC timestamp in this format, so sorting ids
@@ -80,14 +82,55 @@ class AgentRunner:
     this class is the only place that knows how to map graph output onto it.
     """
 
-    def __init__(self, workspace: Workspace, graph) -> None:
+    def __init__(self, workspace: Workspace, graph, checkpointer) -> None:
         self.workspace = workspace
         self.graph = graph
+        # Held separately from the graph: deleting a thread is a store
+        # operation, not something the graph itself can express.
+        self.checkpointer = checkpointer
 
     def _config(self, thread_id: str) -> dict[str, Any]:
         """Which conversation a call belongs to. The runner holds no thread of
         its own -- every request names the one it wants."""
         return {"configurable": {"thread_id": thread_id}}
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Discard a conversation and every checkpoint behind it.
+
+        Permanent, and the only operation here that destroys history rather
+        than appending to it. Files the agent wrote are untouched: they live
+        in the workspace, not in the checkpoint.
+        """
+        log.info("delete thread %s", thread_id)
+        await self.checkpointer.adelete_thread(thread_id)
+
+    async def thread_state(self, thread_id: str) -> ThreadState:
+        """A thread as it stands, for a browser that is not streaming it.
+
+        This is the reload path, and the only place the checkpoint is read to
+        build chat: during a run the stream already carries every message as
+        the engine produces it, so re-reading state per update would fetch
+        what we are already holding.
+
+        An unknown thread id is not an error -- aget_state returns an empty
+        snapshot, which renders as an empty conversation.
+        """
+        state = await self.graph.aget_state(self._config(thread_id))
+
+        pending = None
+        if state.interrupts:
+            proposal = state.interrupts[0].value
+            pending = ProposalPayload(
+                path=proposal["path"],
+                content_hash=proposal["content_hash"],
+                original=proposal["original"],
+                modified=proposal["modified"],
+            )
+
+        return ThreadState(
+            chat=render_messages(state.values.get("messages", [])),
+            pending_proposal=pending,
+        )
 
     async def run(self, thread_id: str, prompt: str) -> AsyncIterator[str]:
         """Start a turn from a user prompt."""

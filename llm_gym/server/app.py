@@ -17,6 +17,7 @@ from llm_gym.server.schemas import (
     DecisionRequest,
     RunRequest,
     SaveRequest,
+    ThreadState,
     ThreadSummary,
 )
 from llm_gym.workspace import FileSnapshot, Workspace
@@ -44,7 +45,7 @@ async def lifespan(_: FastAPI):
     global runner
     setup_logging()
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
-        runner = AgentRunner(workspace, build_graph(checkpointer))
+        runner = AgentRunner(workspace, build_graph(checkpointer), checkpointer)
         yield
         runner = None
 
@@ -70,6 +71,19 @@ def get_threads() -> list[ThreadSummary]:
     summaries.sort(key=lambda summary: summary.created_at or "", reverse=True)
     summaries.sort(key=lambda summary: summary.created_at is None)
     return summaries
+
+
+@app.delete("/api/threads/{thread_id}")
+async def delete_thread(thread_id: str) -> None:
+    """Discard a thread for good. Nothing the agent wrote to disk is removed."""
+    await runner.delete_thread(thread_id)
+
+
+@app.get("/api/state")
+async def get_thread_state(thread_id: str) -> ThreadState:
+    """Rebuild a thread from its checkpoint. Called on load and when switching
+    threads -- never during a run, which is fed by the SSE stream instead."""
+    return await runner.thread_state(thread_id)
 
 
 @app.post("/api/threads")

@@ -1,7 +1,7 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
-import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, X } from "lucide-react";
+import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Trash2, X } from "lucide-react";
 import { SyntheticEvent, useEffect, useRef, useState } from "react";
-import { AgentEvent, Proposal, ThreadSummary, createThread, fetchFile, fetchFiles, fetchThreads, putFile, streamDecision, streamRun } from "./api";
+import { AgentEvent, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
 
@@ -67,17 +67,106 @@ function App() {
   const abortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    fetchFiles().then(setFiles);
-    fetchThreads().then(setThreads);
-    fetchFile().then((file) => {
-      showFile(file);
-      setRunState("idle");
-    });
+    void bootstrap();
   }, []);
+
+  async function bootstrap() {
+    try {
+      void fetchFiles().then(setFiles);
+      void fetchThreads().then(setThreads);
+      showFile(await fetchFile());
+
+      // The stored thread may still be mid-review on the server. loadThread
+      // decides the run state, so it has to settle after the file arrives
+      // rather than racing it.
+      const stored = loadStoredThread();
+      if (stored === null) {
+        setRunState("idle");
+        return;
+      }
+      await loadThread(stored);
+    } catch (error) {
+      // `make dev` starts both halves at once and Vite wins by a second or
+      // so, so a page loaded in that gap gets refused by a backend still
+      // booting. Say so, rather than sitting on "loading" forever.
+      setMessages((current) => [
+        ...current,
+        { role: "system", text: `Backend not reachable: ${error}. Reload the page.` },
+      ]);
+      setRunState("failed");
+    }
+  }
+
+  /** Rebuild the chat for a thread from its checkpoint, and pick up any
+   *  proposal it is still waiting on. */
+  async function loadThread(entry: ThreadSummary) {
+    try {
+      const state = await fetchThreadState(entry.id);
+      setMessages(
+        state.chat.length === 0
+          ? INITIAL_MESSAGES
+          : state.chat.map((item) => ({ role: item.role, text: item.text })),
+      );
+
+      if (state.pending_proposal === null) {
+        setProposal(null);
+        setRunState("idle");
+        return;
+      }
+      // A run was left suspended inside propose_edit. Restoring the diff is
+      // what puts the accept/reject buttons back, and they are the only way
+      // to resume it.
+      setProposal({
+        path: state.pending_proposal.path,
+        contentHash: state.pending_proposal.content_hash,
+        original: state.pending_proposal.original,
+        modified: state.pending_proposal.modified,
+      });
+      setRunState("awaiting_approval");
+    } catch (error) {
+      setMessages([...INITIAL_MESSAGES, { role: "system", text: String(error) }]);
+      setProposal(null);
+      setRunState("idle");
+    }
+  }
 
   function adoptThread(next: ThreadSummary) {
     localStorage.setItem(THREAD_KEY, JSON.stringify(next));
     setThread(next);
+  }
+
+  async function selectThread(entry: ThreadSummary) {
+    if (entry.id === thread?.id || runState !== "idle") {
+      return;
+    }
+    adoptThread(entry);
+    await loadThread(entry);
+  }
+
+  async function removeThread(entry: ThreadSummary) {
+    if (runState !== "idle") {
+      return;
+    }
+    // Nothing here is recoverable, and the checkpoints are the only record
+    // a conversation ever had.
+    if (!window.confirm(`Delete the thread from ${threadLabel(entry)}? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteThread(entry.id);
+      setThreads(await fetchThreads());
+    } catch (error) {
+      setMessages((current) => [...current, { role: "system", text: String(error) }]);
+      return;
+    }
+
+    if (entry.id === thread?.id) {
+      localStorage.removeItem(THREAD_KEY);
+      setThread(null);
+      setMessages(INITIAL_MESSAGES);
+      setProposal(null);
+    }
   }
 
   async function startThread() {
@@ -285,11 +374,11 @@ function App() {
             <span>{files.length}</span>
           </div>
           {isDirty && (
-            <p className="file-hint">
+            <p className="pane-hint">
               Save <strong>{path}</strong> before opening another file.
             </p>
           )}
-          <ul className="file-list">
+          <ul className="pane-list">
             {files.map((entry) => (
               <li key={entry}>
                 <button
@@ -423,21 +512,36 @@ function App() {
             </button>
           </div>
           {thread === null && (
-            <p className="file-hint">
+            <p className="pane-hint">
               No thread yet. Press <strong>New</strong> to start one.
             </p>
           )}
-          <ul className="file-list">
+          <ul className="pane-list">
             {threadList.map((entry) => (
-              <li key={entry.id}>
-                {/* Not selectable yet: this pane only shows what exists. */}
-                <span
+              <li
+                key={entry.id}
+                className={`thread-row${entry.id === thread?.id ? " thread-row-active" : ""}`}
+              >
+                <button
+                  type="button"
                   className={`thread-item${entry.id === thread?.id ? " thread-item-active" : ""}`}
-                  title={entry.id}
+                  onClick={() => void selectThread(entry)}
+                  disabled={runState !== "idle"}
+                  title={runState === "idle" ? entry.id : "Finish the current run before switching threads"}
                 >
                   <MessageSquare size={13} />
                   <span>{threadLabel(entry)}</span>
-                </span>
+                </button>
+                <button
+                  type="button"
+                  className="thread-delete"
+                  onClick={() => void removeThread(entry)}
+                  disabled={runState !== "idle"}
+                  title="Delete this thread"
+                  aria-label={`Delete the thread from ${threadLabel(entry)}`}
+                >
+                  <Trash2 size={12} />
+                </button>
               </li>
             ))}
           </ul>
