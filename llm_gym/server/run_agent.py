@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,7 +22,7 @@ THREAD_STAMP = "%Y_%m_%d_%H_%M_%S"
 
 def new_thread_id() -> str:
     """Mint a thread id. Nobody owns this but the browser that asked for it."""
-    stamp = datetime.now(timezone.utc).strftime(THREAD_STAMP)
+    stamp = datetime.now(UTC).strftime(THREAD_STAMP)
     return f"{stamp}_{uuid4()}"
 
 
@@ -35,10 +35,10 @@ def thread_created_at(thread_id: str) -> str | None:
     """
     stamp = "_".join(thread_id.split("_")[:6])
     try:
-        created = datetime.strptime(stamp, THREAD_STAMP)
+        created = datetime.strptime(stamp, THREAD_STAMP)  # noqa: DTZ007
     except ValueError:
         return None
-    return created.replace(tzinfo=timezone.utc).isoformat()
+    return created.replace(tzinfo=UTC).isoformat()
 
 
 def list_thread_ids(db_path: str) -> list[str]:
@@ -59,9 +59,7 @@ def list_thread_ids(db_path: str) -> list[str]:
 
     connection = sqlite3.connect(db_path)
     try:
-        rows = connection.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id DESC"
-        ).fetchall()
+        rows = connection.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id DESC").fetchall()
     except sqlite3.OperationalError:
         # The file exists but no checkpoint table does: nothing has run yet.
         return []
@@ -79,15 +77,10 @@ def chat_frames(messages: list[BaseMessage]) -> Iterator[str]:
     """Chat rows for a run of messages, through the projection a reload uses,
     so what you watch and what you come back to cannot drift."""
     for item in render_messages(messages):
-        yield sse(
-            {
-                "type": "chat_item",
-                "role": item.role,
-                "text": item.text,
-                "detail": item.detail,
-                "model": item.model,
-            }
-        )
+        # The whole item rather than named fields: a field added to ChatItem
+        # for the reload path would otherwise be silently absent from the live
+        # one, which is exactly the drift render_messages exists to prevent.
+        yield sse({"type": "chat_item", **item.model_dump()})
 
 
 def chunk_text(message: Any) -> str:
@@ -154,6 +147,7 @@ class AgentRunner:
         if state.interrupts:
             proposal = state.interrupts[0].value
             pending = ProposalPayload(
+                kind=proposal["kind"],
                 path=proposal["path"],
                 content_hash=proposal["content_hash"],
                 original=proposal["original"],
@@ -196,9 +190,7 @@ class AgentRunner:
             yield frame
 
     async def _stream(self, config: dict[str, Any], payload: Any) -> AsyncIterator[str]:
-        async for mode, chunk in self.graph.astream(
-            payload, config, stream_mode=["updates", "messages"]
-        ):
+        async for mode, chunk in self.graph.astream(payload, config, stream_mode=["updates", "messages"]):
             if mode == "messages":
                 message, metadata = chunk
                 if metadata["langgraph_node"] != "agent":
@@ -244,10 +236,7 @@ class AgentRunner:
                             yield sse(
                                 {
                                     "type": "agent_error",
-                                    "detail": (
-                                        f"Saved {path}, but could not read it "
-                                        f"back: {error}"
-                                    ),
+                                    "detail": (f"Saved {path}, but could not read it back: {error}"),
                                 }
                             )
                             continue
@@ -271,6 +260,7 @@ class AgentRunner:
             yield sse(
                 {
                     "type": "proposal_ready",
+                    "kind": proposal["kind"],
                     "path": proposal["path"],
                     "content_hash": proposal["content_hash"],
                     "original": proposal["original"],

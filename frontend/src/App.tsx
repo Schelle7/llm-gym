@@ -1,5 +1,5 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
-import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Trash2, X } from "lucide-react";
+import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Terminal, Trash2, X } from "lucide-react";
 import { SyntheticEvent, useEffect, useRef, useState } from "react";
 import { AgentEvent, ChatItem, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchModels, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
@@ -36,6 +36,28 @@ function loadStoredThread(): ThreadSummary | null {
   }
 }
 
+function tokenLabel(count: number): string {
+  return count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`;
+}
+
+/** How alarming a context is, given how full it is. Ollama drops the oldest
+ *  messages past num_ctx silently rather than failing, so this is the only
+ *  warning a run gets before its earliest turns start disappearing. */
+function contextLevel(used: number, limit: number): "ok" | "warn" | "full" {
+  const share = used / limit;
+  if (share >= 0.9) {
+    return "full";
+  }
+  return share >= 0.7 ? "warn" : "ok";
+}
+
+function reviewLabel(proposal: Proposal): string {
+  if (proposal.kind === "run_python") {
+    return "Review code to run";
+  }
+  return proposal.original === "" ? "Review new file" : "Review proposal";
+}
+
 /** Thread ids are unreadable, so list them by the moment they were created. */
 function threadLabel(entry: ThreadSummary): string {
   if (entry.created_at === null) {
@@ -69,6 +91,7 @@ function App() {
   // the server owns the catalogue, so the browser never invents an id.
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
+  const [contextTokens, setContextTokens] = useState(0);
   const [thread, setThread] = useState<ThreadSummary | null>(loadStoredThread);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   // Transient trouble that never reached the graph, so has no place in the
@@ -125,6 +148,7 @@ function App() {
       // model to send.
       const catalogue = await fetchModels();
       setModels(catalogue.models);
+      setContextTokens(catalogue.context_tokens);
       const storedModel = localStorage.getItem(MODEL_KEY);
       setModel(
         storedModel !== null && catalogue.models.includes(storedModel)
@@ -138,7 +162,9 @@ function App() {
       // rather than racing it.
       const stored = loadStoredThread();
       if (stored === null) {
-        setRunState("idle");
+        // A first-ever load. Minting one here rather than leaving the
+        // composer disabled until the human finds their way to "+ NEW".
+        await newThread();
         return;
       }
       await loadThread(stored);
@@ -167,10 +193,8 @@ function App() {
         setRunState("idle");
         return;
       }
-      // A run was left suspended inside propose_edit. Restoring the diff is
-      // what puts the accept/reject buttons back, and they are the only way
-      // to resume it.
       setProposal({
+        kind: state.pending_proposal.kind,
         path: state.pending_proposal.path,
         contentHash: state.pending_proposal.content_hash,
         original: state.pending_proposal.original,
@@ -225,15 +249,22 @@ function App() {
     }
   }
 
+  /** Mint a thread and open it. Raises, because the two callers report a
+   *  failure differently: one is a notice, the other is the page failing to
+   *  start at all. */
+  async function newThread() {
+    const created = await createThread();
+    adoptThread(created);
+    // Empty, but it still has to clear whatever the last thread left up.
+    await loadThread(created);
+  }
+
   async function startThread() {
     if (runState !== "idle") {
       return;
     }
     try {
-      const created = await createThread();
-      adoptThread(created);
-      // Empty, but it still has to clear whatever the last thread left up.
-      await loadThread(created);
+      await newThread();
     } catch (error) {
       setNotice(`Could not start a thread: ${error}`);
     }
@@ -265,7 +296,7 @@ function App() {
       // by this. Cleared every time round the agent -> tools loop, not once
       // at the end of the run.
       setStreaming("");
-      const item = { role: event.role, text: event.text, detail: event.detail, model: event.model };
+      const { type: _type, ...item } = event;
       // The system prompt opens a thread, but it reaches us after the browser
       // has already put the user's own row up, so appending would invert them.
       setMessages((current) =>
@@ -274,6 +305,7 @@ function App() {
     }
     if (event.type === "proposal_ready") {
       setProposal({
+        kind: event.kind,
         path: event.path,
         contentHash: event.content_hash,
         original: event.original,
@@ -404,7 +436,16 @@ function App() {
 
   const isRunning = runState === "streaming";
   const isReviewing = runState === "awaiting_approval" && proposal !== null;
+  const isRunReview = isReviewing && proposal !== null && proposal.kind === "run_python";
   const isDirty = content !== savedContent;
+  // Every call re-sends the whole conversation, so the newest reply's count is
+  // how full the context is now. Rows the model did not produce carry none,
+  // and neither do replies checkpointed before usage was recorded -- those say
+  // so rather than reading as an empty context.
+  const lastModelRow = [...messages]
+    .reverse()
+    .find((item) => item.role === "agent" || item.role === "tool_call");
+  const usedTokens = lastModelRow?.input_tokens ?? null;
   // A brand new thread has no checkpoint yet, so the server cannot list it.
   // Show it anyway -- it is the one you are talking to.
   const threadList =
@@ -434,9 +475,19 @@ function App() {
             <span>Agent workbench</span>
           </div>
         </div>
-        <div className={`status status-${runState}`}>
-          <Circle size={8} fill="currentColor" />
-          {runState.replace("_", " ")}
+        <div className="topbar-right">
+          {lastModelRow !== undefined && contextTokens > 0 && (
+            <div
+              className={`context context-${usedTokens === null ? "unknown" : contextLevel(usedTokens, contextTokens)}`}
+              title="How much of the context window the last reply used. Past it, the oldest messages are dropped."
+            >
+              context {usedTokens === null ? "missing" : tokenLabel(usedTokens)} / {tokenLabel(contextTokens)}
+            </div>
+          )}
+          <div className={`status status-${runState}`}>
+            <Circle size={8} fill="currentColor" />
+            {runState.replace("_", " ")}
+          </div>
         </div>
       </header>
 
@@ -478,7 +529,7 @@ function App() {
               {isReviewing ? proposal.path : path || "Loading file..."}
             </div>
             {isReviewing ? (
-              <span>{proposal.original === "" ? "Review new file" : "Review proposal"}</span>
+              <span>{reviewLabel(proposal)}</span>
             ) : (
               <button
                 className={`button-save${isDirty ? " button-save-dirty" : ""}`}
@@ -501,7 +552,21 @@ function App() {
             </div>
           )}
           <div className="editor-surface">
-            {isReviewing ? (
+            {isRunReview ? (
+              <Editor
+                language="python"
+                value={proposal!.modified}
+                theme="vs-dark"
+                options={{
+                  automaticLayout: true,
+                  fontSize: 14,
+                  minimap: { enabled: false },
+                  padding: { top: 16 },
+                  readOnly: true,
+                  scrollBeyondLastLine: false,
+                }}
+              />
+            ) : isReviewing ? (
               <DiffEditor
                 language="python"
                 original={proposal.original}
@@ -527,11 +592,21 @@ function App() {
             )}
           </div>
           {isReviewing && (
-            <div className="review-bar">
-              <span>One file change requires your decision.</span>
+            <div className={`review-bar${isRunReview ? " review-bar-run" : ""}`}>
+              <span>
+                {isRunReview
+                  ? `Run ${proposal.path}? It gets no network and nothing writable, and is killed if it runs long.`
+                  : "One file change requires your decision."}
+              </span>
               <div className="review-actions">
-                <button className="button-secondary" onClick={() => decide("reject")}><X size={16} />Reject</button>
-                <button className="button-primary" onClick={() => decide("accept")}><Check size={16} />Accept</button>
+                <button className="button-secondary" onClick={() => decide("reject")}>
+                  <X size={16} />
+                  {isRunReview ? "Don't run" : "Reject"}
+                </button>
+                <button className="button-primary" onClick={() => decide("accept")}>
+                  {isRunReview ? <Terminal size={16} /> : <Check size={16} />}
+                  {isRunReview ? "Run" : "Accept"}
+                </button>
               </div>
             </div>
           )}

@@ -17,6 +17,9 @@ Nothing reaches disk until you accept the diff.
 - Threads live in SQLite and the browser owns the thread id.
 - Any local Ollama model, switchable per message, and each chat line records which
   one wrote it.
+- The top bar shows how full the context window is. Ollama drops the oldest
+  messages past it silently, so without that the failure looks like the model
+  getting worse.
 
 The status pill in the top right is the graph's state.
 
@@ -26,16 +29,23 @@ The status pill in the top right is the graph's state.
 
 ## Running it
 
-Needs [Ollama](https://ollama.com) running, and the models listed in
-`llm_gym/models.py` pulled.
+Needs [Ollama](https://ollama.com) running, the models listed in
+`llm_gym/models.py` pulled, and a [Tavily](https://tavily.com) API key for the
+search tools. The key is read at import, so the server will not start without
+it.
 
 ```
+export TAVILY_API_KEY=tvly-...
 ollama pull qwen3.5:4b
 make install
 make dev
 ```
 
 Then http://localhost:5173.
+
+The context size is configured by `CONTEXT_TOKENS` in `llm_gym/config.py` and
+sent to Ollama as `num_ctx` on every model request. The gauge in the top bar
+shows how close the latest request came to that limit.
 
 ## Not built yet
 

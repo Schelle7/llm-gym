@@ -1,10 +1,21 @@
 from langchain_core.tools import tool
+from langchain_tavily import TavilyExtract, TavilySearch
 from langgraph.types import interrupt
 
-from llm_gym.config import WORKSPACE_ROOT
+from llm_gym import sandbox
+from llm_gym.config import SEARCH_MAX_RESULTS, WORKSPACE_ROOT
 from llm_gym.workspace import Workspace, WorkspaceError
 
 workspace = Workspace(root=WORKSPACE_ROOT)
+
+# Reads TAVILY_API_KEY and raises here if it is absent, so a missing key stops
+# the server rather than surfacing as a failed tool call mid-conversation.
+web_search = TavilySearch(max_results=SEARCH_MAX_RESULTS)
+
+# Whole pages, so this is the tool that fills a context window. Nothing here
+# caps it: the header gauge is where that shows up, and hiding the cost would
+# defeat the point of watching it.
+fetch_page = TavilyExtract(extract_depth="basic")
 
 
 @tool
@@ -149,4 +160,72 @@ def propose_edit(path: str, expected_hash: str, modified: str):
     }
 
 
-tools = [ls, read_file, create_file, propose_edit]
+@tool
+def run_python(path: str):
+    """Run a Python file that already exists in the workspace, for human approval.
+
+    Write the file with create_file first, then run it by path. The human is
+    shown the code and decides; nothing executes until they accept.
+
+    It runs with no network and no writable filesystem, so it cannot install
+    packages, download anything, or save its results to a file. Only the
+    standard library and packages already installed can be imported. Print
+    what you want to see: stdout and stderr are the only results that come
+    back, and they are truncated if the script is very chatty.
+
+    If someone selects dont run, then don try it again but stop instead.
+    """
+    try:
+        snapshot = workspace.read_snapshot(path)
+    except WorkspaceError as error:
+        return {"status": "failed", "detail": str(error)}
+
+    if not snapshot.path.endswith(".py"):
+        return {
+            "status": "failed",
+            "path": snapshot.path,
+            "detail": "Only .py files can be run.",
+        }
+
+    # The same pausing point propose_edit documents, and the same constraint:
+    # everything below re-runs from the top on resume, so the read above is
+    # safe only because it is pure and the sandbox call must stay under here.
+    decision = interrupt(
+        {
+            "kind": "run_python",
+            "path": snapshot.path,
+            "content_hash": snapshot.content_hash,
+            # No before-and-after to show. The browser reads this kind as code
+            # about to run rather than as a diff against an empty file.
+            "original": "",
+            "modified": snapshot.content,
+        }
+    )
+
+    if decision != "accept":
+        return {
+            "status": "rejected",
+            "path": snapshot.path,
+            "detail": (
+                "The human refused to run this file. Nothing was executed. "
+                "Ask what they would rather you did than proposing it again."
+            ),
+        }
+
+    result = sandbox.run(snapshot.path)
+    # A traceback, a non-zero exit and a timeout are all reported as a run that
+    # happened. Calling them failures would tell the model the tool broke, when
+    # what broke is the code it wrote.
+    return {
+        "status": "ran",
+        "path": snapshot.path,
+        "exit_code": result.exit_code,
+        "outcome": result.outcome,
+        "truncated": result.truncated,
+        "seconds": round(result.seconds, 2),
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+tools = [ls, read_file, create_file, propose_edit, run_python, web_search, fetch_page]

@@ -76,6 +76,9 @@ source.
   `interrupt()` for approval, and the write must stay *below* that call: on
   resume the function re-runs from the top.
 - `llm_gym/workspace.py` -- every agent-supplied path passes `resolve()`
+- `llm_gym/sandbox.py` -- `run_python`'s bubblewrap namespace. `resolve()`
+  decides which file may be *named*; this decides what it can reach once
+  python starts, and the two are not the same boundary.
 - `llm_gym/server/run_agent.py` -- thread identity, SSE translation
 - `llm_gym/server/history.py` -- messages to chat lines
 - `frontend/src/App.tsx` -- the browser owns `thread_id` (localStorage), so a

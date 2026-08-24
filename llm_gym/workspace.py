@@ -61,18 +61,14 @@ class Workspace:
         total += len(incoming.encode("utf-8"))
         if total > MAX_WORKSPACE_BYTES:
             raise WorkspaceError(
-                f"Workspace would exceed {MAX_WORKSPACE_BYTES} bytes "
-                f"({total} bytes). Delete something first."
+                f"Workspace would exceed {MAX_WORKSPACE_BYTES} bytes ({total} bytes). Delete something first."
             )
 
     def list_dir(self, path: str = ".", include_hidden: bool = False) -> list[str]:
         resolved = self.resolve(path)
         if not resolved.is_dir():
             raise WorkspaceError(f"Not a directory: {path!r}")
-        entries = [
-            entry.name + ("/" if entry.is_dir() else "")
-            for entry in resolved.iterdir()
-        ]
+        entries = [entry.name + ("/" if entry.is_dir() else "") for entry in resolved.iterdir()]
         if not include_hidden:
             entries = [entry for entry in entries if not entry.startswith(".")]
         return sorted(entries)
@@ -82,8 +78,7 @@ class Workspace:
         return sorted(
             self.relative(found)
             for found in self.root.rglob("*")
-            if found.is_file()
-            and not any(part.startswith(".") for part in found.relative_to(self.root).parts)
+            if found.is_file() and not any(part.startswith(".") for part in found.relative_to(self.root).parts)
         )
 
     def read_snapshot(self, path: str) -> FileSnapshot:

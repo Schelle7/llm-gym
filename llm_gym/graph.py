@@ -22,7 +22,7 @@ async def call_model(state, config):
 
     # Strict here, tolerant in history.render_messages: this is the last point
     # at which a reply missing its own name is still fixable.
-    name = response.response_metadata["model_name"]
+    name = response.response_metadata["model"]
 
     if response.tool_calls:
         for call in response.tool_calls:
@@ -43,5 +43,5 @@ def build_graph(checkpointer: BaseCheckpointSaver):
     builder.add_edge(START, "agent")
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")
-    
+
     return builder.compile(checkpointer=checkpointer)

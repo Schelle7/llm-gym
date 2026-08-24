@@ -27,9 +27,7 @@ def setup_logging(console_level: int = logging.WARNING) -> None:
 
     to_file = logging.FileHandler(LOG_FILE, encoding="utf-8")
     to_file.setLevel(logging.DEBUG)
-    to_file.setFormatter(
-        logging.Formatter("%(asctime)s  %(levelname)-7s %(message)s", "%H:%M:%S")
-    )
+    to_file.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s %(message)s", "%H:%M:%S"))
     log.addHandler(to_file)
 
     to_console = logging.StreamHandler()

@@ -10,9 +10,7 @@ class ChatItem(BaseModel):
     # message type -- hence "agent" over "assistant", and tool_call (from the
     # agent node's tool_calls) split from tool_result (from the tools node).
     # "system" is the leftover: something that fit no expected shape.
-    role: Literal[
-        "system_prompt", "user", "agent", "tool_call", "tool_result", "system"
-    ]
+    role: Literal["system_prompt", "user", "agent", "tool_call", "tool_result", "system"]
     text: str
     # The full body behind a shortened row, shown on hover. Set wherever the
     # text was clipped, and nowhere else, so a tooltip always means there is
@@ -20,11 +18,22 @@ class ChatItem(BaseModel):
     detail: str | None = None
     # None on rows no model produced, and on replies stored without a name.
     model: str | None = None
+    # The whole conversation the model was sent for this reply, not just what
+    # is new, so the most recent one is how full the context was. None on rows
+    # no model produced, and on replies checkpointed before usage was recorded.
+    input_tokens: int | None = None
 
 
 class ProposalPayload(BaseModel):
-    """The file change a paused run is waiting on, as the interrupt stored it."""
+    """What a paused run is waiting on, as the interrupt stored it.
 
+    `kind` is the tool that raised it, and is what decides the wording of the
+    decision: accepting an edit writes a file, accepting a run executes one.
+    A plain str rather than a Literal, because this renders a checkpoint and a
+    kind nobody anticipated should still open the thread.
+    """
+
+    kind: str
     path: str
     content_hash: str
     original: str
@@ -54,6 +63,9 @@ class ModelList(BaseModel):
 
     models: list[str]
     default: str
+    # What ChatItem.input_tokens is measured against. Sent with the catalogue
+    # because the browser needs it before the first reply gives it a number.
+    context_tokens: int
 
 
 class RunRequest(BaseModel):

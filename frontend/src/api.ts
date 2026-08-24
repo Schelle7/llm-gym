@@ -2,15 +2,10 @@ export type AgentEvent =
   | { type: "agent_delta"; text: string }
   // A finished line of transcript, rendered server-side by the same
   // projection that rebuilds a thread on reload.
-  | {
-      type: "chat_item";
-      role: ChatItem["role"];
-      text: string;
-      detail: string | null;
-      model: string | null;
-    }
+  | ({ type: "chat_item" } & ChatItem)
   | {
       type: "proposal_ready";
+      kind: ProposalKind;
       path: string;
       content_hash: string;
       original: string;
@@ -32,7 +27,10 @@ export interface FileSnapshot {
   content_hash: string;
 }
 
+export type ProposalKind = "propose_edit" | "create_file" | "run_python";
+
 export interface Proposal {
+  kind: ProposalKind;
   path: string;
   contentHash: string;
   original: string;
@@ -54,17 +52,22 @@ export interface ChatItem {
   text: string;
   detail?: string | null;
   model?: string | null;
+  /** The whole conversation sent for this reply, so the most recent one is how
+   *  full the context was. Null on rows no model produced. */
+  input_tokens?: number | null;
 }
 
 /** The models the picker offers, and which one it opens on. */
 export interface ModelList {
   models: string[];
   default: string;
+  context_tokens: number;
 }
 
 export interface ThreadState {
   chat: ChatItem[];
   pending_proposal: {
+    kind: ProposalKind;
     path: string;
     content_hash: string;
     original: string;

@@ -4,16 +4,16 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from llm_gym.config import CHECKPOINT_DB, DEFAULT_MODEL, WORKSPACE_FILE, WORKSPACE_ROOT
+from llm_gym.config import CHECKPOINT_DB, CONTEXT_TOKENS, DEFAULT_MODEL, WORKSPACE_FILE, WORKSPACE_ROOT
 from llm_gym.graph import build_graph
 from llm_gym.logconf import setup_logging
+from llm_gym.models import MODELS
 from llm_gym.server.run_agent import (
     AgentRunner,
     list_thread_ids,
     new_thread_id,
     thread_created_at,
 )
-from llm_gym.models import MODELS
 from llm_gym.server.schemas import (
     DecisionRequest,
     ModelList,
@@ -23,7 +23,6 @@ from llm_gym.server.schemas import (
     ThreadSummary,
 )
 from llm_gym.workspace import FileSnapshot, Workspace
-
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -49,7 +48,6 @@ async def lifespan(_: FastAPI):
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         runner = AgentRunner(workspace, build_graph(checkpointer), checkpointer)
         yield
-        runner = None
 
 
 def _summary(thread_id: str) -> ThreadSummary:
@@ -96,7 +94,7 @@ def create_thread() -> ThreadSummary:
 
 @app.get("/api/models")
 def list_models() -> ModelList:
-    return ModelList(models=list(MODELS), default=DEFAULT_MODEL)
+    return ModelList(models=list(MODELS), default=DEFAULT_MODEL, context_tokens=CONTEXT_TOKENS)
 
 
 @app.get("/api/files")

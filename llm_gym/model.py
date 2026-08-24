@@ -1,15 +1,16 @@
-from functools import lru_cache
+from functools import cache
 
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 
+from llm_gym.config import CONTEXT_TOKENS
 from llm_gym.models import MODELS
 from llm_gym.tools import tools
 
-OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 
-@lru_cache(maxsize=None)
-def get_model(model_id: str) -> ChatOpenAI:
+@cache
+def get_model(model_id: str) -> ChatOllama:
     """One model's client, built on first use and kept for the process.
 
     Tools are bound here rather than by the caller: bind_tools returns a new
@@ -18,11 +19,8 @@ def get_model(model_id: str) -> ChatOpenAI:
     if model_id not in MODELS:
         raise KeyError(f"Unknown model {model_id!r}. Known: {', '.join(MODELS)}")
 
-    return ChatOpenAI(
+    return ChatOllama(
         model=model_id,
         base_url=OLLAMA_BASE_URL,
-        api_key="ollama",
-        # A streamed response carries no token counts unless this is asked for,
-        # and the node streams. Without it every checkpoint records usage of None.
-        stream_usage=True,
+        num_ctx=CONTEXT_TOKENS,
     ).bind_tools(tools)

@@ -62,11 +62,7 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
         text = _text(message)
         # One row with the whole prompt behind it: it opens the conversation
         # and shapes every reply, so leaving it out misrepresents the thread.
-        return (
-            [ChatItem(role="system_prompt", text=_one_line(text), detail=text)]
-            if text
-            else []
-        )
+        return [ChatItem(role="system_prompt", text=_one_line(text), detail=text)] if text else []
 
     if isinstance(message, HumanMessage):
         text = _text(message)
@@ -79,10 +75,14 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
         items = []
         # Tolerant here, strict in graph.call_model: a reply already stored
         # without a name can never gain one.
-        model = message.response_metadata.get("model_name")
+        model = message.response_metadata.get("model")
+        # Tolerant for the same reason as model: older replies may carry no
+        # usage metadata and can never gain it after they are checkpointed.
+        usage = message.usage_metadata
+        input_tokens = usage["input_tokens"] if usage else None
         text = _text(message)
         if text:
-            items.append(ChatItem(role="agent", text=text, model=model))
+            items.append(ChatItem(role="agent", text=text, model=model, input_tokens=input_tokens))
         # The request itself, so a call stays visible even when its result is
         # a shape _tool_item has no phrasing for. The row is clipped to one
         # line, so the unclipped arguments go behind it: that is the only
@@ -94,12 +94,11 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
                     text=f"{call['name']}({_call_args(call['args'])})",
                     detail=_call_detail(call),
                     model=model,
+                    input_tokens=input_tokens,
                 )
             )
         if not items:
-            items.append(
-                _diagnostic("The model replied with neither text nor a tool call.")
-            )
+            items.append(_diagnostic("The model replied with neither text nor a tool call."))
         return items
 
     return [_diagnostic(f"{type(message).__name__}: {_one_line(_text(message))}")]
@@ -129,20 +128,91 @@ def _tool_item(message: ToolMessage) -> ChatItem:
     if status == "failed":
         return _result(f"{name} failed: {result.get('detail', 'unknown error')}")
     if status == "rejected":
-        return _result(f"Rejected the change to {path}")
+        return _result(f"Declined to run {path}" if name == "run_python" else f"Rejected the change to {path}")
     if status == "accepted":
         return _result(f"{'Created' if name == 'create_file' else 'Edited'} {path}")
     if name == "read_file":
         return _result(f"Read {path}")
     if name == "ls":
         return _result(f"Listed {path or '.'}")
+    if name == "run_python":
+        return _run_item(result)
+    if name == "tavily_search":
+        return _search_item(result)
+    if name == "tavily_extract":
+        return _extract_item(result)
 
     # A tool, or a result shape, that arrived without a line being added here.
     return ChatItem(
         role="tool_result",
         text=f"{name} returned {_one_line(json.dumps(result))}",
-        detail=json.dumps(result, indent=2),
+        detail=_clip_lines(json.dumps(result, indent=2)),
     )
+
+
+def _run_item(result: dict[str, Any]) -> ChatItem:
+    """A sandboxed run, as its verdict with everything it printed behind it.
+
+    The exit code leads because it is the one thing every script produces,
+    including the ones that print nothing at all. stderr is folded in with
+    stdout rather than given its own row: a traceback is split across both,
+    and the interleaving is what makes it readable.
+    """
+    outcome = result.get("outcome")
+    path = result.get("path", "")
+    seconds = result.get("seconds")
+    if outcome == "completed":
+        text = f"Ran {path}, exit {result.get('exit_code')} in {seconds}s"
+    elif outcome == "timeout":
+        text = f"Ran {path}, killed at the {seconds}s timeout"
+    else:
+        text = f"run_python returned {_one_line(json.dumps(result))}"
+    if result.get("truncated"):
+        text += ", output truncated"
+
+    printed = "\n".join(part for part in [result.get("stdout", ""), result.get("stderr", "")] if part)
+    return ChatItem(role="tool_result", text=text, detail=_clip_lines(printed) or None)
+
+
+def _search_item(result: dict[str, Any]) -> ChatItem:
+    """A search, as a count on the row with the hits behind it.
+
+    The snippets are left out deliberately: they are already in the model's
+    context, and repeating them here would bury the one number that says
+    whether the search was any use.
+    """
+    hits = result.get("results", [])
+    listing = "\n".join(f"{hit.get('title', '')}\n{hit.get('url', '')}\n" for hit in hits)
+    return ChatItem(
+        role="tool_result",
+        text=f'Searched "{_one_line(result.get("query", ""), 60)}", {len(hits)} results',
+        detail=_clip_lines(listing) or None,
+    )
+
+
+def _extract_item(result: dict[str, Any]) -> ChatItem:
+    """A page fetch, weighed in characters.
+
+    The size is the row's whole point: this is the tool that fills a context
+    window, and the count is what the header gauge is about to move by. A url
+    that could not be fetched is named rather than dropped, because a paywall
+    or a bot check is the ordinary outcome here, not an anomaly.
+    """
+    pages = result.get("results", [])
+    failed = [item.get("url", "") for item in result.get("failed_results", [])]
+    chars = sum(len(page.get("raw_content", "")) for page in pages)
+
+    if pages:
+        where = _one_line(pages[0].get("url", ""), 60) if len(pages) == 1 else f"{len(pages)} pages"
+        text = f"Read {where} ({chars:,} chars)"
+    else:
+        text = "Fetched nothing"
+    if failed:
+        text += f", {len(failed)} failed"
+
+    bodies = [f"{page.get('url', '')}\n{page.get('raw_content', '')}" for page in pages]
+    detail = "\n\n".join(bodies + [f"failed: {url}" for url in failed])
+    return ChatItem(role="tool_result", text=text, detail=_clip_lines(detail) or None)
 
 
 def _call_args(args: dict[str, Any]) -> str:
@@ -178,10 +248,21 @@ def _text(message: BaseMessage) -> str:
         return message.content.strip()
 
     return "".join(
-        block.get("text", "")
-        for block in message.content
-        if isinstance(block, dict) and block.get("type") == "text"
+        block.get("text", "") for block in message.content if isinstance(block, dict) and block.get("type") == "text"
     ).strip()
+
+
+def _clip_lines(text: str, limit: int = 20) -> str:
+    """Cap a hover body, saying what was left out.
+
+    For reference material -- a search result, an unrecognised payload -- and
+    not for _call_detail, which is where a proposed file body is read before
+    it is applied and so has to arrive whole.
+    """
+    lines = text.splitlines()
+    if len(lines) <= limit:
+        return text
+    return "\n".join(lines[:limit]) + f"\n\n… showing {limit} of {len(lines)} lines"
 
 
 def _one_line(text: str, limit: int = 90) -> str:
