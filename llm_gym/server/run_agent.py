@@ -1,4 +1,3 @@
-import json
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
@@ -12,7 +11,19 @@ from langgraph.types import Command
 from llm_gym.config import SYSTEM_PROMPT
 from llm_gym.logconf import log
 from llm_gym.server.history import render_messages, tool_result
-from llm_gym.server.schemas import ProposalPayload, ThreadState
+from llm_gym.server.schemas import (
+    AgentDelta,
+    AgentError,
+    ApprovalRequired,
+    ChatItemEvent,
+    EventPayload,
+    FileSaved,
+    ProposalPayload,
+    ProposalReady,
+    ReasoningDelta,
+    RunFinished,
+    ThreadState,
+)
 from llm_gym.workspace import Workspace, WorkspaceError
 
 # Thread ids start with a UTC timestamp in this format, so sorting ids
@@ -68,19 +79,16 @@ def list_thread_ids(db_path: str) -> list[str]:
     return [row[0] for row in rows]
 
 
-def sse(event: dict[str, Any]) -> str:
+def sse(event: EventPayload) -> str:
     """Encode one event as an SSE frame, the format api.ts parses."""
-    return f"data: {json.dumps(event)}\n\n"
+    return f"data: {event.model_dump_json()}\n\n"
 
 
 def chat_frames(messages: list[BaseMessage]) -> Iterator[str]:
     """Chat rows for a run of messages, through the projection a reload uses,
     so what you watch and what you come back to cannot drift."""
     for item in render_messages(messages):
-        # The whole item rather than named fields: a field added to ChatItem
-        # for the reload path would otherwise be silently absent from the live
-        # one, which is exactly the drift render_messages exists to prevent.
-        yield sse({"type": "chat_item", **item.model_dump()})
+        yield sse(ChatItemEvent(type="chat_item", **item.model_dump()))
 
 
 def chunk_text(message: Any) -> str:
@@ -96,6 +104,14 @@ def chunk_text(message: Any) -> str:
         parts.append(fragment["name"] or "")
         parts.append(fragment["args"] or "")
     return "".join(parts)
+
+
+def chunk_reasoning(message: Any) -> str:
+    return "".join(
+        block["reasoning"]
+        for block in message.content_blocks
+        if block["type"] == "reasoning" and "reasoning" in block
+    )
 
 
 class AgentRunner:
@@ -195,9 +211,12 @@ class AgentRunner:
                 message, metadata = chunk
                 if metadata["langgraph_node"] != "agent":
                     continue
+                reasoning = chunk_reasoning(message)
+                if reasoning:
+                    yield sse(ReasoningDelta(type="reasoning_delta", text=reasoning))
                 text = chunk_text(message)
                 if text:
-                    yield sse({"type": "agent_delta", "text": text})
+                    yield sse(AgentDelta(type="agent_delta", text=text))
             elif mode == "updates":
                 for node, update in chunk.items():
                     # updates also carries engine keys such as "__interrupt__",
@@ -234,20 +253,20 @@ class AgentRunner:
                         except WorkspaceError as error:
                             log.error("read-back of %s failed: %s", path, error)
                             yield sse(
-                                {
-                                    "type": "agent_error",
-                                    "detail": (f"Saved {path}, but could not read it back: {error}"),
-                                }
+                                AgentError(
+                                    type="agent_error",
+                                    detail=f"Saved {path}, but could not read it back: {error}",
+                                )
                             )
                             continue
 
                         yield sse(
-                            {
-                                "type": "file_saved",
-                                "path": snapshot.path,
-                                "content": snapshot.content,
-                                "content_hash": snapshot.content_hash,
-                            }
+                            FileSaved(
+                                type="file_saved",
+                                path=snapshot.path,
+                                content=snapshot.content,
+                                content_hash=snapshot.content_hash,
+                            )
                         )
 
         # The stream ends either because the graph finished or because a tool
@@ -258,15 +277,15 @@ class AgentRunner:
         if state.interrupts:
             proposal = state.interrupts[0].value
             yield sse(
-                {
-                    "type": "proposal_ready",
-                    "kind": proposal["kind"],
-                    "path": proposal["path"],
-                    "content_hash": proposal["content_hash"],
-                    "original": proposal["original"],
-                    "modified": proposal["modified"],
-                }
+                ProposalReady(
+                    type="proposal_ready",
+                    kind=proposal["kind"],
+                    path=proposal["path"],
+                    content_hash=proposal["content_hash"],
+                    original=proposal["original"],
+                    modified=proposal["modified"],
+                )
             )
-            yield sse({"type": "approval_required"})
+            yield sse(ApprovalRequired(type="approval_required"))
         else:
-            yield sse({"type": "run_finished"})
+            yield sse(RunFinished(type="run_finished"))

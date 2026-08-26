@@ -5,6 +5,7 @@ langgraph.png
 __pycache__
 /frontend/node_modules/
 /frontend/dist/
+/frontend/openapi.json
 .idea
 /test_workspace/*
 !/test_workspace/hello.py

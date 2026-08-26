@@ -80,6 +80,17 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
         # usage metadata and can never gain it after they are checkpointed.
         usage = message.usage_metadata
         input_tokens = usage["input_tokens"] if usage else None
+        reasoning = _reasoning(message)
+        if reasoning:
+            items.append(
+                ChatItem(
+                    role="reasoning",
+                    text=f"Thinking · {len(reasoning):,} characters",
+                    detail=reasoning,
+                    model=model,
+                    input_tokens=input_tokens,
+                )
+            )
         text = _text(message)
         if text:
             items.append(ChatItem(role="agent", text=text, model=model, input_tokens=input_tokens))
@@ -249,6 +260,14 @@ def _text(message: BaseMessage) -> str:
 
     return "".join(
         block.get("text", "") for block in message.content if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+
+
+def _reasoning(message: AIMessage) -> str:
+    return "".join(
+        block["reasoning"]
+        for block in message.content_blocks
+        if block["type"] == "reasoning" and "reasoning" in block
     ).strip()
 
 

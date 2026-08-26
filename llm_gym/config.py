@@ -19,6 +19,7 @@ SYSTEM_PROMPT = (
 SEARCH_MAX_RESULTS = 4
 
 CONTEXT_TOKENS = 8192
+REASONING = True
 
 SANDBOX_SYSTEM_PATHS = ("/usr", "/bin", "/lib", "/lib64")
 

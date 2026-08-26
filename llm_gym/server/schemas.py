@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, RootModel
 
 
 class ChatItem(BaseModel):
@@ -10,11 +10,10 @@ class ChatItem(BaseModel):
     # message type -- hence "agent" over "assistant", and tool_call (from the
     # agent node's tool_calls) split from tool_result (from the tools node).
     # "system" is the leftover: something that fit no expected shape.
-    role: Literal["system_prompt", "user", "agent", "tool_call", "tool_result", "system"]
+    role: Literal["system_prompt", "user", "reasoning", "agent", "tool_call", "tool_result", "system"]
     text: str
-    # The full body behind a shortened row, shown on hover. Set wherever the
-    # text was clipped, and nowhere else, so a tooltip always means there is
-    # more to see.
+    # The full body behind a shortened row. Reasoning expands inline; other
+    # detailed rows expose it on hover.
     detail: str | None = None
     # None on rows no model produced, and on replies stored without a name.
     model: str | None = None
@@ -22,6 +21,65 @@ class ChatItem(BaseModel):
     # is new, so the most recent one is how full the context was. None on rows
     # no model produced, and on replies checkpointed before usage was recorded.
     input_tokens: int | None = None
+
+
+class AgentDelta(BaseModel):
+    type: Literal["agent_delta"]
+    text: str
+
+
+class ReasoningDelta(BaseModel):
+    type: Literal["reasoning_delta"]
+    text: str
+
+
+class ChatItemEvent(ChatItem):
+    type: Literal["chat_item"]
+
+
+class ProposalReady(BaseModel):
+    type: Literal["proposal_ready"]
+    kind: str
+    path: str
+    content_hash: str
+    original: str
+    modified: str
+
+
+class ApprovalRequired(BaseModel):
+    type: Literal["approval_required"]
+
+
+class FileSaved(BaseModel):
+    type: Literal["file_saved"]
+    path: str
+    content: str
+    content_hash: str
+
+
+class AgentError(BaseModel):
+    type: Literal["agent_error"]
+    detail: str
+
+
+class RunFinished(BaseModel):
+    type: Literal["run_finished"]
+
+
+EventPayload = Annotated[
+    AgentDelta | ReasoningDelta | ChatItemEvent | ProposalReady | ApprovalRequired | FileSaved | AgentError | RunFinished,
+    Field(discriminator="type"),
+]
+
+
+class AgentEvent(RootModel[EventPayload]):
+    pass
+
+
+class FileSnapshot(BaseModel):
+    path: str
+    content: str
+    content_hash: str
 
 
 class ProposalPayload(BaseModel):

@@ -100,8 +100,10 @@ function App() {
   // Raw tokens from the agent node, shown while they arrive and thrown away
   // once the finished message lands.
   const [streaming, setStreaming] = useState("");
+  const [thinking, setThinking] = useState("");
   const abortController = useRef<AbortController | null>(null);
   const streamBox = useRef<HTMLDivElement | null>(null);
+  const thinkingBox = useRef<HTMLDivElement | null>(null);
   const transcript = useRef<HTMLDivElement | null>(null);
   // Whether the transcript was sitting at the bottom when the last message
   // arrived. Held in a ref rather than state because it has to be read as it
@@ -115,7 +117,10 @@ function App() {
     if (streamBox.current !== null) {
       streamBox.current.scrollTop = streamBox.current.scrollHeight;
     }
-  }, [streaming]);
+    if (thinkingBox.current !== null) {
+      thinkingBox.current.scrollTop = thinkingBox.current.scrollHeight;
+    }
+  }, [streaming, thinking]);
 
   useEffect(() => {
     // `streaming` belongs here even though the box sits outside the
@@ -124,7 +129,7 @@ function App() {
     if (transcript.current !== null && atBottom.current) {
       transcript.current.scrollTop = transcript.current.scrollHeight;
     }
-  }, [messages, streaming]);
+  }, [messages, streaming, thinking]);
 
   function trackScroll() {
     const pane = transcript.current;
@@ -196,7 +201,7 @@ function App() {
       setProposal({
         kind: state.pending_proposal.kind,
         path: state.pending_proposal.path,
-        contentHash: state.pending_proposal.content_hash,
+        content_hash: state.pending_proposal.content_hash,
         original: state.pending_proposal.original,
         modified: state.pending_proposal.modified,
       });
@@ -285,6 +290,9 @@ function App() {
   }
 
   function handleAgentEvent(event: AgentEvent) {
+    if (event.type === "reasoning_delta") {
+      setThinking((current) => current + event.text);
+    }
     if (event.type === "agent_delta") {
       // Provisional, and deliberately kept out of the message list. Because
       // it never becomes a chat row there is nothing to reconcile later: the
@@ -296,6 +304,7 @@ function App() {
       // by this. Cleared every time round the agent -> tools loop, not once
       // at the end of the run.
       setStreaming("");
+      setThinking("");
       const { type: _type, ...item } = event;
       // The system prompt opens a thread, but it reaches us after the browser
       // has already put the user's own row up, so appending would invert them.
@@ -307,7 +316,7 @@ function App() {
       setProposal({
         kind: event.kind,
         path: event.path,
-        contentHash: event.content_hash,
+        content_hash: event.content_hash,
         original: event.original,
         modified: event.modified,
       });
@@ -350,6 +359,8 @@ function App() {
     setNotice(null);
     setRunState("streaming");
     setProposal(null);
+    setStreaming("");
+    setThinking("");
 
     try {
       await streamRun(thread.id, model, submittedPrompt, controller.signal, handleAgentEvent);
@@ -370,6 +381,7 @@ function App() {
       // Half-written tokens were never committed to the transcript, so a run
       // that stopped or failed leaves nothing behind.
       setStreaming("");
+      setThinking("");
     }
   }
 
@@ -424,12 +436,14 @@ function App() {
       setRunState("failed");
     } finally {
       setStreaming("");
+      setThinking("");
     }
   }
 
   function resetRun() {
     setNotice(null);
     setStreaming("");
+    setThinking("");
     setRunState("idle");
     setProposal(null);
   }
@@ -619,6 +633,20 @@ function App() {
           </div>
           <div className="messages" ref={transcript} onScroll={trackScroll}>
             {messages.map((message, index) => {
+              if (message.role === "reasoning") {
+                return (
+                  <details className="message message-reasoning" key={`reasoning-${index}`}>
+                    <summary>
+                      <span>
+                        thinking
+                        {message.model && <em className="message-model">{message.model}</em>}
+                      </span>
+                      <p>{message.text}</p>
+                    </summary>
+                    <pre>{message.detail}</pre>
+                  </details>
+                );
+              }
               const machinery = MACHINERY_ROLES.has(message.role);
               return (
                 <article
@@ -642,8 +670,15 @@ function App() {
               );
             })}
           </div>
+          {thinking !== "" && (
+            <div className="stream-box stream-box-thinking" ref={thinkingBox}>
+              <span>Thinking</span>
+              <pre>{thinking}</pre>
+            </div>
+          )}
           {streaming !== "" && (
             <div className="stream-box" ref={streamBox}>
+              <span>Answer</span>
               <pre>{streaming}</pre>
             </div>
           )}

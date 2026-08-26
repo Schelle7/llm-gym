@@ -2,7 +2,7 @@ from functools import cache
 
 from langchain_ollama import ChatOllama
 
-from llm_gym.config import CONTEXT_TOKENS
+from llm_gym.config import CONTEXT_TOKENS, REASONING
 from llm_gym.models import MODELS
 from llm_gym.tools import tools
 
@@ -23,4 +23,5 @@ def get_model(model_id: str) -> ChatOllama:
         model=model_id,
         base_url=OLLAMA_BASE_URL,
         num_ctx=CONTEXT_TOKENS,
+        reasoning=REASONING,
     ).bind_tools(tools)

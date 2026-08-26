@@ -13,6 +13,7 @@
   --line: #d5d1c7;
   --accent: #e45735;
   --agent: #2f6f9f;
+  --thinking: #28766e;
   --dark: #1e1f1c;
 }
 
@@ -174,6 +175,23 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .message-agent { padding-left: 20px; border-left: 2px solid var(--agent); }
 .message-agent > span { color: var(--agent); }
 
+.message-reasoning { padding-left: 20px; border-left: 2px solid var(--thinking); }
+.message-reasoning summary { cursor: pointer; list-style-position: outside; }
+.message-reasoning summary > span { display: block; margin-bottom: 4px; color: var(--thinking); font: 500 10px "DM Mono"; text-transform: uppercase; }
+.message-reasoning summary p { color: var(--muted-strong); font: 400 11px "DM Mono"; }
+.message-reasoning > pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted-strong);
+  background: #efeee8;
+  font: 400 11px/1.55 "DM Mono";
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Machinery rows: one line each, wrench-marked instead of role-labelled, and
    sharing the agent's left lane so the transcript reads as two columns. */
 .message-machinery {
@@ -234,6 +252,9 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   padding: 8px 10px;
   border: 1px dashed var(--agent);
 }
+.stream-box > span { display: block; margin-bottom: 5px; color: var(--agent); font: 500 9px "DM Mono"; text-transform: uppercase; }
+.stream-box-thinking { border-color: var(--thinking); }
+.stream-box-thinking > span { color: var(--thinking); }
 .stream-box pre {
   margin: 0;
   color: var(--muted-strong);

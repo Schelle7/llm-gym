@@ -15,16 +15,25 @@ from llm_gym.server.run_agent import (
     thread_created_at,
 )
 from llm_gym.server.schemas import (
+    AgentEvent,
     DecisionRequest,
+    FileSnapshot,
     ModelList,
     RunRequest,
     SaveRequest,
     ThreadState,
     ThreadSummary,
 )
-from llm_gym.workspace import FileSnapshot, Workspace
+from llm_gym.workspace import Workspace
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+SSE_RESPONSE = {
+    200: {
+        "model": AgentEvent,
+        "description": "A stream of AgentEvent payloads encoded as Server-Sent Events.",
+        "content": {"text/event-stream": {}},
+    }
+}
 
 workspace = Workspace(root=WORKSPACE_ROOT)
 # Which file the editor opens on load. A UI concern, not a workspace one.
@@ -116,7 +125,7 @@ def save_file(request: SaveRequest) -> FileSnapshot:
     )
 
 
-@app.post("/api/run")
+@app.post("/api/run", responses=SSE_RESPONSE)
 async def start_run(request: RunRequest) -> StreamingResponse:
     return StreamingResponse(
         runner.run(request.thread_id, request.model, request.prompt),
@@ -125,7 +134,7 @@ async def start_run(request: RunRequest) -> StreamingResponse:
     )
 
 
-@app.post("/api/decision")
+@app.post("/api/decision", responses=SSE_RESPONSE)
 async def submit_decision(request: DecisionRequest) -> StreamingResponse:
     """Resume the paused graph. The agent may still have something to say,
     so this streams like a run instead of returning a single snapshot.

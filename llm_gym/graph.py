@@ -20,8 +20,6 @@ async def call_model(state, config):
     async for chunk in model.astream(state["messages"]):
         response = chunk if response is None else response + chunk
 
-    # Strict here, tolerant in history.render_messages: this is the last point
-    # at which a reply missing its own name is still fixable.
     name = response.response_metadata["model"]
 
     if response.tool_calls:

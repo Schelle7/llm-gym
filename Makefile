@@ -1,13 +1,18 @@
 CONDA_ENV := llm-gym
 PYTHON_VERSION := 3.12
 
-.PHONY: install dev dev-backend dev-frontend lint fix
+.PHONY: install generate-api dev dev-backend dev-frontend lint fix
 
 install:
 	@conda run -n $(CONDA_ENV) python --version >/dev/null 2>&1 || conda create -n $(CONDA_ENV) python=$(PYTHON_VERSION) -y
 	conda run -n $(CONDA_ENV) python -m pip install --editable ".[dev]"
+	npm --prefix frontend install
 
-dev:
+generate-api:
+	python -m llm_gym.server.export_openapi
+	npm --prefix frontend run generate:api
+
+dev: generate-api
 	$(MAKE) --jobs=2 dev-backend dev-frontend
 
 dev-backend:

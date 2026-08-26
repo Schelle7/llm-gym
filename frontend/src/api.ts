@@ -1,79 +1,31 @@
-export type AgentEvent =
-  | { type: "agent_delta"; text: string }
-  // A finished line of transcript, rendered server-side by the same
-  // projection that rebuilds a thread on reload.
-  | ({ type: "chat_item" } & ChatItem)
-  | {
-      type: "proposal_ready";
-      kind: ProposalKind;
-      path: string;
-      content_hash: string;
-      original: string;
-      modified: string;
-    }
-  | { type: "approval_required" }
-  | {
-      type: "file_saved";
-      path: string;
-      content: string;
-      content_hash: string;
-    }
-  | { type: "agent_error"; detail: string }
-  | { type: "run_finished" };
+import type { components } from "./generated/api";
 
-export interface FileSnapshot {
-  path: string;
-  content: string;
-  content_hash: string;
-}
+type Schemas = components["schemas"];
 
-export type ProposalKind = "propose_edit" | "create_file" | "run_python";
+export type AgentEvent = Schemas["AgentEvent"];
+
+export type FileSnapshot = Schemas["FileSnapshot"];
 
 export interface Proposal {
-  kind: ProposalKind;
+  kind: string;
   path: string;
-  contentHash: string;
+  content_hash: string;
   original: string;
   modified: string;
 }
 
 /** A conversation. `created_at` is ISO-8601 UTC, or null for an id the
  *  server did not mint and therefore cannot date. */
-export interface ThreadSummary {
-  id: string;
-  created_at: string | null;
-}
+export type ThreadSummary = Schemas["ThreadSummary"];
 
 /** One line of transcript. `detail` carries the full body behind a shortened
- *  row -- so far only the system prompt uses it. `model` is null on rows no
- *  model produced. */
-export interface ChatItem {
-  role: "system_prompt" | "user" | "agent" | "tool_call" | "tool_result" | "system";
-  text: string;
-  detail?: string | null;
-  model?: string | null;
-  /** The whole conversation sent for this reply, so the most recent one is how
-   *  full the context was. Null on rows no model produced. */
-  input_tokens?: number | null;
-}
+ *  row. `model` is null on rows no model produced. */
+export type ChatItem = Schemas["ChatItem"];
 
 /** The models the picker offers, and which one it opens on. */
-export interface ModelList {
-  models: string[];
-  default: string;
-  context_tokens: number;
-}
+export type ModelList = Schemas["ModelList"];
 
-export interface ThreadState {
-  chat: ChatItem[];
-  pending_proposal: {
-    kind: ProposalKind;
-    path: string;
-    content_hash: string;
-    original: string;
-    modified: string;
-  } | null;
-}
+export type ThreadState = Schemas["ThreadState"];
 
 /** Rebuild a thread from its checkpoint. For loading and switching threads;
  *  a running thread is fed by the stream instead. */
@@ -146,10 +98,15 @@ export async function putFile(
   expectedHash: string,
   content: string,
 ): Promise<FileSnapshot> {
+  const request: Schemas["SaveRequest"] = {
+    path,
+    expected_hash: expectedHash,
+    content,
+  };
   const response = await fetch("/api/file", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, expected_hash: expectedHash, content }),
+    body: JSON.stringify(request),
   });
   if (!response.ok) {
     throw new Error(`Unable to save file: ${response.status}`);
@@ -192,10 +149,15 @@ export async function streamRun(
   signal: AbortSignal,
   onEvent: (event: AgentEvent) => void,
 ): Promise<void> {
+  const request: Schemas["RunRequest"] = {
+    thread_id: threadId,
+    model,
+    prompt,
+  };
   const response = await fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ thread_id: threadId, model, prompt }),
+    body: JSON.stringify(request),
     signal,
   });
   await readEventStream(response, onEvent);
@@ -214,10 +176,15 @@ export async function streamDecision(
   signal: AbortSignal,
   onEvent: (event: AgentEvent) => void,
 ): Promise<void> {
+  const request: Schemas["DecisionRequest"] = {
+    thread_id: threadId,
+    model,
+    decision,
+  };
   const response = await fetch("/api/decision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ thread_id: threadId, model, decision }),
+    body: JSON.stringify(request),
     signal,
   });
   await readEventStream(response, onEvent);

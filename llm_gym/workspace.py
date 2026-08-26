@@ -1,6 +1,7 @@
-from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+
+from llm_gym.server.schemas import FileSnapshot
 
 # One crude cap on the whole workspace. Deliberately simple: if the agent
 # makes a mess of many small files, that is cheap to notice and delete.
@@ -9,13 +10,6 @@ MAX_WORKSPACE_BYTES = 1_000_000
 
 class WorkspaceError(Exception):
     """A tool asked for something the workspace will not allow."""
-
-
-@dataclass(frozen=True)
-class FileSnapshot:
-    path: str
-    content: str
-    content_hash: str
 
 
 def _hash(content: str) -> str:
@@ -86,7 +80,11 @@ class Workspace:
         if not resolved.is_file():
             raise WorkspaceError(f"No such file: {path!r}")
         content = resolved.read_text(encoding="utf-8")
-        return FileSnapshot(self.relative(resolved), content, _hash(content))
+        return FileSnapshot(
+            path=self.relative(resolved),
+            content=content,
+            content_hash=_hash(content),
+        )
 
     def create(self, path: str, content: str) -> FileSnapshot:
         resolved = self.resolve(path)
