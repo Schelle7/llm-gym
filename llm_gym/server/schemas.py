@@ -10,17 +10,23 @@ class ChatItem(BaseModel):
     # message type -- hence "agent" over "assistant", and tool_call (from the
     # agent node's tool_calls) split from tool_result (from the tools node).
     # "system" is the leftover: something that fit no expected shape.
-    role: Literal["system_prompt", "user", "reasoning", "agent", "tool_call", "tool_result", "system"]
+    role: Literal["system_prompt", "user", "thinking", "agent", "tool_call", "tool_result", "error", "system"]
     text: str
-    # The full body behind a shortened row. Reasoning expands inline; other
+    # The full body behind a shortened row. Thinking expands inline; other
     # detailed rows expose it on hover.
     detail: str | None = None
+    is_agent_input: bool = True
     # None on rows no model produced, and on replies stored without a name.
     model: str | None = None
-    # The whole conversation the model was sent for this reply, not just what
-    # is new, so the most recent one is how full the context was. None on rows
-    # no model produced, and on replies checkpointed before usage was recorded.
+    num_ctx: int | None = None
+    reasoning: bool | None = None
+    tools: list[str] | None = None
+    commit: str | None = None
+    dirty: bool | None = None
+    called_at: str | None = None
     input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class AgentDelta(BaseModel):
@@ -67,7 +73,14 @@ class RunFinished(BaseModel):
 
 
 EventPayload = Annotated[
-    AgentDelta | ReasoningDelta | ChatItemEvent | ProposalReady | ApprovalRequired | FileSaved | AgentError | RunFinished,
+    AgentDelta
+    | ReasoningDelta
+    | ChatItemEvent
+    | ProposalReady
+    | ApprovalRequired
+    | FileSaved
+    | AgentError
+    | RunFinished,
     Field(discriminator="type"),
 ]
 

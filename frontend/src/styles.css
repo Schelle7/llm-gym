@@ -14,6 +14,7 @@
   --accent: #e45735;
   --agent: #2f6f9f;
   --thinking: #28766e;
+  --error: #c0261b;
   --dark: #1e1f1c;
 }
 
@@ -166,6 +167,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .message p { margin: 0; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 .message-detailed { cursor: help; }
 .message-model { margin-left: 6px; color: var(--agent); font-size: 10px; font-style: normal; text-transform: none; opacity: 0.7; }
+.message-excluded { margin-left: 6px; padding: 1px 5px; border: 1px dashed var(--line); color: var(--muted); font-size: 9px; font-style: normal; }
+
+.settings-note { margin: 0 0 14px; color: var(--muted); font: 400 10px "DM Mono"; }
+.settings-note summary { cursor: pointer; list-style-position: outside; }
+.settings-note summary > span { display: inline-flex; align-items: center; gap: 8px; width: calc(100% - 4px); }
+.settings-note summary > span::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
+.settings-note p { margin: 6px 0 0; color: var(--muted-strong); line-height: 1.6; }
 
 /* A rule down one side, not a bubble on one side: the prose stays left in
    both, so only the marker and its label move. */
@@ -175,11 +183,15 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .message-agent { padding-left: 20px; border-left: 2px solid var(--agent); }
 .message-agent > span { color: var(--agent); }
 
-.message-reasoning { padding-left: 20px; border-left: 2px solid var(--thinking); }
-.message-reasoning summary { cursor: pointer; list-style-position: outside; }
-.message-reasoning summary > span { display: block; margin-bottom: 4px; color: var(--thinking); font: 500 10px "DM Mono"; text-transform: uppercase; }
-.message-reasoning summary p { color: var(--muted-strong); font: 400 11px "DM Mono"; }
-.message-reasoning > pre {
+.message-error { padding-left: 20px; border-left: 2px solid var(--error); }
+.message-error > span { color: var(--error); }
+.message-error p { color: var(--error); font: 400 11px/1.6 "DM Mono"; }
+
+.message-thinking { padding-left: 20px; border-left: 2px solid var(--thinking); }
+.message-thinking summary { cursor: pointer; list-style-position: outside; }
+.message-thinking summary > span { display: block; margin-bottom: 4px; color: var(--thinking); font: 500 10px "DM Mono"; text-transform: uppercase; }
+.message-thinking summary p { color: var(--muted-strong); font: 400 11px "DM Mono"; }
+.message-thinking > pre {
   max-height: 360px;
   overflow: auto;
   margin: 10px 0 0;

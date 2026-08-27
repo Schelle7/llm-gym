@@ -130,9 +130,12 @@ def _argv(script: str) -> list[str]:
     return [
         BWRAP,
         *binds,
-        "--proc", "/proc",
-        "--dev", "/dev",
-        "--chdir", _WORK,
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--chdir",
+        _WORK,
         "--unshare-all",
         "--die-with-parent",
         "--new-session",
@@ -140,12 +143,18 @@ def _argv(script: str) -> list[str]:
         # No writable path exists anywhere inside, so a library reaching for a
         # home directory should fail where it asks rather than quietly landing
         # somewhere unexpected.
-        "--setenv", "HOME", "/nonexistent",
-        "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+        "--setenv",
+        "HOME",
+        "/nonexistent",
+        "--setenv",
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
         # Without this, a script killed at the deadline loses whatever was
         # still sitting in python's block buffer, which is usually everything
         # it printed and the only clue as to where it got stuck.
-        "--setenv", "PYTHONUNBUFFERED", "1",
+        "--setenv",
+        "PYTHONUNBUFFERED",
+        "1",
         sys.executable,
         script,
     ]

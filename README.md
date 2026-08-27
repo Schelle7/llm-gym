@@ -49,7 +49,6 @@ shows how close the latest request came to that limit.
 
 ## Not built yet
 
-- A web search tool
-- BC / RL on the stored trajectories, using accepted and rejected edits as the signal
+- BC / RL
 - Target task: read a CV, find matching jobs, filter on location, skill overlap and
   seniority, and output a table of links with no duplicates

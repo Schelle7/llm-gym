@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 
 from llm_gym.config import SYSTEM_PROMPT
@@ -108,9 +108,7 @@ def chunk_text(message: Any) -> str:
 
 def chunk_reasoning(message: Any) -> str:
     return "".join(
-        block["reasoning"]
-        for block in message.content_blocks
-        if block["type"] == "reasoning" and "reasoning" in block
+        block["reasoning"] for block in message.content_blocks if block["type"] == "reasoning" and "reasoning" in block
     )
 
 
@@ -205,11 +203,13 @@ class AgentRunner:
         async for frame in self._stream(config, Command(resume=decision)):
             yield frame
 
-    async def _stream(self, config: dict[str, Any], payload: Any) -> AsyncIterator[str]:
+    async def _graph_frames(self, config: dict[str, Any], payload: Any) -> AsyncIterator[str]:
         async for mode, chunk in self.graph.astream(payload, config, stream_mode=["updates", "messages"]):
             if mode == "messages":
                 message, metadata = chunk
                 if metadata["langgraph_node"] != "agent":
+                    continue
+                if not isinstance(message, AIMessageChunk):
                     continue
                 reasoning = chunk_reasoning(message)
                 if reasoning:
@@ -268,6 +268,17 @@ class AgentRunner:
                                 content_hash=snapshot.content_hash,
                             )
                         )
+
+    async def _stream(self, config: dict[str, Any], payload: Any) -> AsyncIterator[str]:
+        try:
+            async for frame in self._graph_frames(config, payload):
+                yield frame
+        except Exception as error:  # noqa: BLE001
+            # Nothing else can report this: the response is 200 the moment the
+            # first frame goes out, so an escaping exception only closes the
+            # connection. The log still gets the traceback.
+            log.exception("the run failed")
+            yield sse(AgentError(type="agent_error", detail=str(error)))
 
         # The stream ends either because the graph finished or because a tool
         # called interrupt(). Asking for the state is a reliable way to tell

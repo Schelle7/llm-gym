@@ -21,6 +21,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from llm_gym.graph import is_agent_input
 from llm_gym.server.schemas import ChatItem
 
 
@@ -73,27 +74,24 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
 
     if isinstance(message, AIMessage):
         items = []
-        # Tolerant here, strict in graph.call_model: a reply already stored
-        # without a name can never gain one.
-        model = message.response_metadata.get("model")
-        # Tolerant for the same reason as model: older replies may carry no
-        # usage metadata and can never gain it after they are checkpointed.
-        usage = message.usage_metadata
-        input_tokens = usage["input_tokens"] if usage else None
+        origin = _origin(message)
+        refusal = message.response_metadata.get("error")
+        if refusal:
+            return [ChatItem(role="error", text=refusal, is_agent_input=is_agent_input(message), **origin)]
         reasoning = _reasoning(message)
         if reasoning:
             items.append(
                 ChatItem(
-                    role="reasoning",
+                    role="thinking",
                     text=f"Thinking · {len(reasoning):,} characters",
                     detail=reasoning,
-                    model=model,
-                    input_tokens=input_tokens,
+                    is_agent_input=False,
+                    **origin,
                 )
             )
         text = _text(message)
         if text:
-            items.append(ChatItem(role="agent", text=text, model=model, input_tokens=input_tokens))
+            items.append(ChatItem(role="agent", text=text, **origin))
         # The request itself, so a call stays visible even when its result is
         # a shape _tool_item has no phrasing for. The row is clipped to one
         # line, so the unclipped arguments go behind it: that is the only
@@ -104,8 +102,7 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
                     role="tool_call",
                     text=f"{call['name']}({_call_args(call['args'])})",
                     detail=_call_detail(call),
-                    model=model,
-                    input_tokens=input_tokens,
+                    **origin,
                 )
             )
         if not items:
@@ -113,6 +110,27 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
         return items
 
     return [_diagnostic(f"{type(message).__name__}: {_one_line(_text(message))}")]
+
+
+def _origin(message: AIMessage) -> dict[str, Any]:
+    """The call behind a reply, stamped onto every row it produces.
+
+    Read tolerantly, unlike graph.call_model which writes them: a reply
+    checkpointed before any of this was recorded can never gain it.
+    """
+    usage = message.usage_metadata or {}
+    return {
+        "model": message.response_metadata.get("model"),
+        "num_ctx": message.response_metadata.get("num_ctx"),
+        "reasoning": message.response_metadata.get("reasoning"),
+        "tools": message.response_metadata.get("tools"),
+        "commit": message.response_metadata.get("commit"),
+        "dirty": message.response_metadata.get("dirty"),
+        "called_at": message.response_metadata.get("called_at"),
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    }
 
 
 def _tool_item(message: ToolMessage) -> ChatItem:
@@ -265,9 +283,7 @@ def _text(message: BaseMessage) -> str:
 
 def _reasoning(message: AIMessage) -> str:
     return "".join(
-        block["reasoning"]
-        for block in message.content_blocks
-        if block["type"] == "reasoning" and "reasoning" in block
+        block["reasoning"] for block in message.content_blocks if block["type"] == "reasoning" and "reasoning" in block
     ).strip()
 
 

@@ -14,6 +14,7 @@ dependencies = [
     "langgraph>=1.0",
     "langgraph-checkpoint-sqlite>=3.0",
     "langsmith",
+    "ollama",
     "uvicorn>=0.35",
 ]
 

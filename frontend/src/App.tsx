@@ -1,6 +1,6 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Terminal, Trash2, X } from "lucide-react";
-import { SyntheticEvent, useEffect, useRef, useState } from "react";
+import { Fragment, SyntheticEvent, useEffect, useRef, useState } from "react";
 import { AgentEvent, ChatItem, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchModels, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
@@ -51,6 +51,45 @@ function contextLevel(used: number, limit: number): "ok" | "warn" | "full" {
   return share >= 0.7 ? "warn" : "ok";
 }
 
+interface Settings {
+  summary: string;
+  tools: string;
+  origin: string;
+}
+
+/** What a row was produced under. Null on rows no model produced, and on
+ *  replies checkpointed before any of it was recorded. */
+function settingsOf(message: Message): Settings | null {
+  if (!message.model) {
+    return null;
+  }
+  const tools = message.tools ?? [];
+  const commit = message.commit ? message.commit.slice(0, 7) : "";
+
+  const parts = [message.model];
+  if (message.num_ctx) {
+    parts.push(`${tokenLabel(message.num_ctx)} ctx`);
+  }
+  if (typeof message.reasoning === "boolean") {
+    parts.push(message.reasoning ? "thinking" : "no thinking");
+  }
+  if (tools.length > 0) {
+    parts.push(`${tools.length} tools`);
+  }
+  if (commit !== "") {
+    parts.push(`${commit}${message.dirty ? "*" : ""}`);
+  }
+
+  const origin = [];
+  if (commit !== "") {
+    origin.push(`${commit}${message.dirty ? " dirty" : " clean"}`);
+  }
+  if (message.called_at) {
+    origin.push(new Date(message.called_at).toLocaleString());
+  }
+  return { summary: parts.join(" · "), tools: tools.join(", "), origin: origin.join(" · ") };
+}
+
 function reviewLabel(proposal: Proposal): string {
   if (proposal.kind === "run_python") {
     return "Review code to run";
@@ -75,6 +114,45 @@ function threadLabel(entry: ThreadSummary): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function messageRow(message: Message) {
+  if (message.role === "thinking") {
+    return (
+      <details className="message message-thinking">
+        <summary>
+          <span>
+            thinking
+            {message.model && <em className="message-model">{message.model}</em>}
+            {message.is_agent_input === false && <em className="message-excluded">not agent input</em>}
+          </span>
+          <p>{message.text}</p>
+        </summary>
+        <pre>{message.detail}</pre>
+      </details>
+    );
+  }
+  const machinery = MACHINERY_ROLES.has(message.role);
+  return (
+    <article
+      // detail is set only where the server clipped the text, so
+      // the help cursor never promises more than there is.
+      className={[
+        "message",
+        `message-${message.role}`,
+        machinery ? "message-machinery" : "",
+        message.detail ? "message-detailed" : "",
+      ].join(" ")}
+      title={message.detail ?? undefined}
+    >
+      <span>
+        {machinery ? "🔧" : message.role}
+        {message.model && <em className="message-model">{message.model}</em>}
+        {message.is_agent_input === false && <em className="message-excluded">not agent input</em>}
+      </span>
+      <p>{message.text}</p>
+    </article>
+  );
 }
 
 function App() {
@@ -354,7 +432,7 @@ function App() {
 
     const controller = new AbortController();
     abortController.current = controller;
-    setMessages((current) => [...current, { role: "user", text: submittedPrompt }]);
+    setMessages((current) => [...current, { role: "user", text: submittedPrompt, is_agent_input: true }]);
     setPrompt("");
     setNotice(null);
     setRunState("streaming");
@@ -459,7 +537,21 @@ function App() {
   const lastModelRow = [...messages]
     .reverse()
     .find((item) => item.role === "agent" || item.role === "tool_call");
-  const usedTokens = lastModelRow?.input_tokens ?? null;
+  const usedTokens = lastModelRow?.total_tokens ?? null;
+  const contextLimit = lastModelRow?.num_ctx ?? contextTokens;
+  // Keyed on everything but the timestamp, which moves every call and would
+  // put a line above every row.
+  const settingsNotes: (Settings | null)[] = [];
+  let inForce = "";
+  for (const message of messages) {
+    const settings = settingsOf(message);
+    if (settings === null || settings.summary + settings.tools === inForce) {
+      settingsNotes.push(null);
+      continue;
+    }
+    inForce = settings.summary + settings.tools;
+    settingsNotes.push(settings);
+  }
   // A brand new thread has no checkpoint yet, so the server cannot list it.
   // Show it anyway -- it is the one you are talking to.
   const threadList =
@@ -490,12 +582,12 @@ function App() {
           </div>
         </div>
         <div className="topbar-right">
-          {lastModelRow !== undefined && contextTokens > 0 && (
+          {lastModelRow !== undefined && contextLimit > 0 && (
             <div
-              className={`context context-${usedTokens === null ? "unknown" : contextLevel(usedTokens, contextTokens)}`}
+              className={`context context-${usedTokens === null ? "unknown" : contextLevel(usedTokens, contextLimit)}`}
               title="How much of the context window the last reply used. Past it, the oldest messages are dropped."
             >
-              context {usedTokens === null ? "missing" : tokenLabel(usedTokens)} / {tokenLabel(contextTokens)}
+              context {usedTokens === null ? "missing" : tokenLabel(usedTokens)} / {tokenLabel(contextLimit)}
             </div>
           )}
           <div className={`status status-${runState}`}>
@@ -633,40 +725,20 @@ function App() {
           </div>
           <div className="messages" ref={transcript} onScroll={trackScroll}>
             {messages.map((message, index) => {
-              if (message.role === "reasoning") {
-                return (
-                  <details className="message message-reasoning" key={`reasoning-${index}`}>
-                    <summary>
-                      <span>
-                        thinking
-                        {message.model && <em className="message-model">{message.model}</em>}
-                      </span>
-                      <p>{message.text}</p>
-                    </summary>
-                    <pre>{message.detail}</pre>
-                  </details>
-                );
-              }
-              const machinery = MACHINERY_ROLES.has(message.role);
+              const settings = settingsNotes[index];
               return (
-                <article
-                  // detail is set only where the server clipped the text, so
-                  // the help cursor never promises more than there is.
-                  className={[
-                    "message",
-                    `message-${message.role}`,
-                    machinery ? "message-machinery" : "",
-                    message.detail ? "message-detailed" : "",
-                  ].join(" ")}
-                  key={`${message.role}-${index}`}
-                  title={message.detail ?? undefined}
-                >
-                  <span>
-                    {machinery ? "🔧" : message.role}
-                    {message.model && <em className="message-model">{message.model}</em>}
-                  </span>
-                  <p>{message.text}</p>
-                </article>
+                <Fragment key={`${message.role}-${index}`}>
+                  {settings !== null && (
+                    <details className="settings-note">
+                      <summary>
+                        <span>{settings.summary}</span>
+                      </summary>
+                      {settings.tools !== "" && <p>{settings.tools}</p>}
+                      {settings.origin !== "" && <p>{settings.origin}</p>}
+                    </details>
+                  )}
+                  {messageRow(message)}
+                </Fragment>
               );
             })}
           </div>

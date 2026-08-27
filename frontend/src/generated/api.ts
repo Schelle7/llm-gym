@@ -206,15 +206,36 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "system_prompt" | "user" | "reasoning" | "agent" | "tool_call" | "tool_result" | "system";
+            role: "system_prompt" | "user" | "thinking" | "agent" | "tool_call" | "tool_result" | "error" | "system";
             /** Text */
             text: string;
             /** Detail */
             detail?: string | null;
+            /**
+             * Is Agent Input
+             * @default true
+             */
+            is_agent_input: boolean;
             /** Model */
             model?: string | null;
+            /** Num Ctx */
+            num_ctx?: number | null;
+            /** Reasoning */
+            reasoning?: boolean | null;
+            /** Tools */
+            tools?: string[] | null;
+            /** Commit */
+            commit?: string | null;
+            /** Dirty */
+            dirty?: boolean | null;
+            /** Called At */
+            called_at?: string | null;
             /** Input Tokens */
             input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Total Tokens */
+            total_tokens?: number | null;
         };
         /** ChatItemEvent */
         ChatItemEvent: {
@@ -222,15 +243,36 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "system_prompt" | "user" | "reasoning" | "agent" | "tool_call" | "tool_result" | "system";
+            role: "system_prompt" | "user" | "thinking" | "agent" | "tool_call" | "tool_result" | "error" | "system";
             /** Text */
             text: string;
             /** Detail */
             detail?: string | null;
+            /**
+             * Is Agent Input
+             * @default true
+             */
+            is_agent_input: boolean;
             /** Model */
             model?: string | null;
+            /** Num Ctx */
+            num_ctx?: number | null;
+            /** Reasoning */
+            reasoning?: boolean | null;
+            /** Tools */
+            tools?: string[] | null;
+            /** Commit */
+            commit?: string | null;
+            /** Dirty */
+            dirty?: boolean | null;
+            /** Called At */
+            called_at?: string | null;
             /** Input Tokens */
             input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Total Tokens */
+            total_tokens?: number | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
