@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -54,6 +55,7 @@ async def lifespan(_: FastAPI):
     """
     global runner
     setup_logging()
+    Path(CHECKPOINT_DB).parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         runner = AgentRunner(workspace, build_graph(checkpointer), checkpointer)
         yield

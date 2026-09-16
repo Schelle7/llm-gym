@@ -200,7 +200,10 @@ class AgentRunner:
         """
         log.info("resume: %s (thread %s, model %s)", decision, thread_id, model)
         config = self._run_config(thread_id, model)
-        async for frame in self._stream(config, Command(resume=decision)):
+        state = await self.graph.aget_state(config)
+        proposal = state.interrupts[0].value
+        approval = {"decision": decision, "content_hash": proposal["content_hash"]}
+        async for frame in self._stream(config, Command(resume=approval)):
             yield frame
 
     async def _graph_frames(self, config: dict[str, Any], payload: Any) -> AsyncIterator[str]:

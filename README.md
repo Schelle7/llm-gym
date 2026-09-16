@@ -1,11 +1,12 @@
 # llm-gym
-
-A LangGraph agent that edits files under human approval. It runs against local
-models through Ollama, so nothing leaves the machine.
+A LangGraph agent that edits files under human approval. Model inference runs
+locally through Ollama. The web search and page extraction tools send queries
+and URLs to Tavily.
 
 ![Reviewing a file the agent proposed](docs/approval.png)
 
-Nothing reaches disk until you accept the diff.
+Proposed workspace edits are written only after you accept the diff.
+Conversation checkpoints are saved independently in SQLite.
 
 ## Notable
 
@@ -15,8 +16,8 @@ Nothing reaches disk until you accept the diff.
 - Every agent-supplied path goes through one `resolve()`, confining the agent to
   `test_workspace/`.
 - Threads live in SQLite and the browser owns the thread id.
-- Any local Ollama model, switchable per message, and each chat line records which
-  one wrote it.
+- Models from the catalogue in `llm_gym/models.py` are switchable per message,
+  and model-generated chat lines record which model produced them.
 - The top bar shows how full the context window is. Ollama drops the oldest
   messages past it silently, so without that the failure looks like the model
   getting worse.
@@ -29,26 +30,35 @@ The status pill in the top right is the graph's state.
 
 ## Running it
 
-Needs [Ollama](https://ollama.com) running, the models listed in
-`llm_gym/models.py` pulled, and a [Tavily](https://tavily.com) API key for the
-search tools. The key is read at import, so the server will not start without
-it.
+Needs Linux with Bubblewrap (`bwrap`) installed and user namespaces enabled,
+Conda, Node.js/npm, and [Ollama](https://ollama.com) running. Bubblewrap is
+required at startup for sandboxed execution.
+
+The search tools require a [Tavily](https://tavily.com) API key. The key is
+read at import, so the server will not start without it.
+
+Install dependencies:
+
+```
+make install
+```
+
+This creates the `llm-gym` Conda environment if needed and installs the Python
+and frontend dependencies. Before running the commands below, ensure that
+`llm-gym` is the active Conda environment in your terminal.
 
 ```
 export TAVILY_API_KEY=tvly-...
-ollama pull qwen3.5:4b
-make install
+ollama pull gemma4:e2b
 make dev
 ```
 
 Then http://localhost:5173.
 
+`gemma4:e2b` is the default model in `llm_gym/config.py`. Pull any additional
+models from `llm_gym/models.py` before selecting them in the UI.
+The server creates `checkpoints/` on startup to store conversation state.
+
 The context size is configured by `CONTEXT_TOKENS` in `llm_gym/config.py` and
 sent to Ollama as `num_ctx` on every model request. The gauge in the top bar
 shows how close the latest request came to that limit.
-
-## Not built yet
-
-- BC / RL
-- Target task: read a CV, find matching jobs, filter on location, skill overlap and
-  seniority, and output a table of links with no duplicates

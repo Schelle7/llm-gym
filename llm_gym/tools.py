@@ -72,7 +72,7 @@ def create_file(path: str, content: str):
         }
     )
 
-    if decision != "accept":
+    if decision["decision"] != "accept":
         return {
             "status": "rejected",
             "path": path,
@@ -132,7 +132,7 @@ def propose_edit(path: str, expected_hash: str, modified: str):
         }
     )
 
-    if decision != "accept":
+    if decision["decision"] != "accept":
         return {
             "status": "rejected",
             "path": snapshot.path,
@@ -166,6 +166,7 @@ def run_python(path: str):
 
     Write the file with create_file first, then run it by path. The human is
     shown the code and decides; nothing executes until they accept.
+    If the file changed since review, execution is refused.
 
     It runs with no network and no writable filesystem, so it cannot install
     packages, download anything, or save its results to a file. Only the
@@ -202,7 +203,7 @@ def run_python(path: str):
         }
     )
 
-    if decision != "accept":
+    if decision["decision"] != "accept":
         return {
             "status": "rejected",
             "path": snapshot.path,
@@ -210,6 +211,13 @@ def run_python(path: str):
                 "The human refused to run this file. Nothing was executed. "
                 "Ask what they would rather you did than proposing it again."
             ),
+        }
+
+    if snapshot.content_hash != decision["content_hash"]:
+        return {
+            "status": "failed",
+            "path": snapshot.path,
+            "detail": "File changed after it was shown for approval. Nothing was executed. Request a new review.",
         }
 
     result = sandbox.run(snapshot.path)
