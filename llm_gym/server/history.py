@@ -21,7 +21,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from llm_gym.graph import is_agent_input
 from llm_gym.server.schemas import ChatItem
 
 
@@ -77,7 +76,7 @@ def _items_for(message: BaseMessage) -> list[ChatItem]:
         origin = _origin(message)
         refusal = message.response_metadata.get("error")
         if refusal:
-            return [ChatItem(role="error", text=refusal, is_agent_input=is_agent_input(message), **origin)]
+            return [ChatItem(role="error", text=_text(message), detail=refusal, **origin)]
         reasoning = _reasoning(message)
         if reasoning:
             items.append(
@@ -155,7 +154,18 @@ def _tool_item(message: ToolMessage) -> ChatItem:
     status = result.get("status")
 
     if status == "failed":
-        return _result(f"{name} failed: {result.get('detail', 'unknown error')}")
+        details = [result["detail"]]
+        if "workspace_changes" in message.response_metadata:
+            changes = message.response_metadata["workspace_changes"]
+            for kind in ("added", "deleted", "modified"):
+                details.extend(f"{kind}: {path}" for path in changes[kind])
+        if "operation_result" in result:
+            details.append(f"Original tool result:\n{result['operation_result']}")
+        return ChatItem(
+            role="tool_result",
+            text=f"{name} failed: {_one_line(result['detail'])}",
+            detail="\n".join(details),
+        )
     if status == "rejected":
         return _result(f"Declined to run {path}" if name == "run_python" else f"Rejected the change to {path}")
     if status == "accepted":

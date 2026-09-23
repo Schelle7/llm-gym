@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -25,7 +25,8 @@ from llm_gym.server.schemas import (
     ThreadState,
     ThreadSummary,
 )
-from llm_gym.workspace import Workspace
+from llm_gym.snapshots import snapshots
+from llm_gym.workspace import FileConflictError, Workspace
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 SSE_RESPONSE = {
@@ -56,6 +57,7 @@ async def lifespan(_: FastAPI):
     global runner
     setup_logging()
     Path(CHECKPOINT_DB).parent.mkdir(parents=True, exist_ok=True)
+    snapshots.setup()
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         runner = AgentRunner(workspace, build_graph(checkpointer), checkpointer)
         yield
@@ -120,11 +122,14 @@ def read_file(path: str = DEFAULT_FILE) -> FileSnapshot:
 
 @app.put("/api/file")
 def save_file(request: SaveRequest) -> FileSnapshot:
-    return workspace.apply_change(
-        path=request.path,
-        expected_hash=request.expected_hash,
-        modified=request.content,
-    )
+    try:
+        return workspace.apply_change(
+            path=request.path,
+            expected_hash=request.expected_hash,
+            modified=request.content,
+        )
+    except FileConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.post("/api/run", responses=SSE_RESPONSE)

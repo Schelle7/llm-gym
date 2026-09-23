@@ -24,6 +24,7 @@ from llm_gym.server.schemas import (
     RunFinished,
     ThreadState,
 )
+from llm_gym.snapshots import snapshots
 from llm_gym.workspace import Workspace, WorkspaceError
 
 # Thread ids start with a UTC timestamp in this format, so sorting ids
@@ -143,6 +144,7 @@ class AgentRunner:
         """
         log.info("delete thread %s", thread_id)
         await self.checkpointer.adelete_thread(thread_id)
+        snapshots.delete_thread(thread_id)
 
     async def thread_state(self, thread_id: str) -> ThreadState:
         """A thread as it stands, for a browser that is not streaming it.
@@ -178,14 +180,16 @@ class AgentRunner:
         config = self._run_config(thread_id, model)
         state = await self.graph.aget_state(config)
         messages = []
+        snapshot_id = snapshots.capture(thread_id)
+        metadata = {"workspace_snapshot_id": snapshot_id}
         if not state.values.get("messages"):
-            system = SystemMessage(content=SYSTEM_PROMPT)
+            system = SystemMessage(content=SYSTEM_PROMPT, response_metadata=metadata)
             messages.append(system)
             # Graph input rather than a node's output, so the stream below
             # never carries it. The browser adds the user's own row itself.
             for frame in chat_frames([system]):
                 yield frame
-        messages.append(HumanMessage(content=prompt))
+        messages.append(HumanMessage(content=prompt, response_metadata=metadata))
 
         log.info("run: %r (thread %s, model %s)", prompt, thread_id, model)
         async for frame in self._stream(config, {"messages": messages}):
@@ -202,7 +206,7 @@ class AgentRunner:
         config = self._run_config(thread_id, model)
         state = await self.graph.aget_state(config)
         proposal = state.interrupts[0].value
-        approval = {"decision": decision, "content_hash": proposal["content_hash"]}
+        approval = {"decision": decision, "workspace_snapshot_id": proposal["workspace_snapshot_id"]}
         async for frame in self._stream(config, Command(resume=approval)):
             yield frame
 

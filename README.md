@@ -7,6 +7,8 @@ and URLs to Tavily.
 
 Proposed workspace edits are written only after you accept the diff.
 Conversation checkpoints are saved independently in SQLite.
+Complete workspace snapshots are stored alongside them, with references in
+message metadata.
 
 ## Notable
 

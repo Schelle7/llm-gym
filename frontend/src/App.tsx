@@ -1,7 +1,7 @@
 import { DiffEditor, Editor } from "@monaco-editor/react";
 import { Check, Circle, FileCode2, MessageSquare, Play, Plus, RotateCcw, Save, Square, Terminal, Trash2, X } from "lucide-react";
 import { Fragment, SyntheticEvent, useEffect, useRef, useState } from "react";
-import { AgentEvent, ChatItem, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchModels, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
+import { AgentEvent, ChatItem, FileConflictError, Proposal, ThreadSummary, createThread, deleteThread, fetchFile, fetchFiles, fetchModels, fetchThreadState, fetchThreads, putFile, streamDecision, streamRun } from "./api";
 
 type RunState = "loading" | "idle" | "saving" | "streaming" | "awaiting_approval" | "stopped" | "failed";
 
@@ -175,6 +175,7 @@ function App() {
   // Transient trouble that never reached the graph, so has no place in the
   // transcript. Cleared whenever the next attempt starts.
   const [notice, setNotice] = useState<string | null>(null);
+  const [fileConflict, setFileConflict] = useState<string | null>(null);
   // Raw tokens from the agent node, shown while they arrive and thrown away
   // once the finished message lands.
   const [streaming, setStreaming] = useState("");
@@ -354,6 +355,7 @@ function App() {
   }
 
   function showFile(file: { path: string; content: string; content_hash: string }) {
+    setFileConflict(null);
     setPath(file.path);
     setContent(file.content);
     setSavedContent(file.content);
@@ -480,9 +482,23 @@ function App() {
       showFile(await putFile(path, contentHash, content));
       setRunState("idle");
     } catch (error) {
-      // Usually the hash conflict from workspace.apply_change. Stay idle so
-      // the edit is still there to retry or reconcile.
-      setNotice(String(error));
+      if (error instanceof FileConflictError) {
+        setFileConflict(error.message);
+      } else {
+        setNotice(String(error));
+      }
+      setRunState("idle");
+    }
+  }
+
+  async function reloadFile() {
+    setRunState("loading");
+    setNotice(null);
+    try {
+      showFile(await fetchFile(path));
+    } catch (error) {
+      setNotice(`Could not reload file: ${error}`);
+    } finally {
       setRunState("idle");
     }
   }
@@ -649,6 +665,19 @@ function App() {
               </button>
             )}
           </div>
+          {fileConflict !== null && (
+            <div className="notice" role="alert">
+              <span>{fileConflict}</span>
+              <button
+                className="reload-file"
+                type="button"
+                onClick={reloadFile}
+                disabled={runState !== "idle"}
+              >
+                Reload from disk (discard edits)
+              </button>
+            </div>
+          )}
           {notice !== null && (
             <div className="notice">
               <span>{notice}</span>

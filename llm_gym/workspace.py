@@ -12,6 +12,10 @@ class WorkspaceError(Exception):
     """A tool asked for something the workspace will not allow."""
 
 
+class FileConflictError(WorkspaceError):
+    """The editor's saved version no longer matches the file on disk."""
+
+
 def _hash(content: str) -> str:
     return sha256(content.encode("utf-8")).hexdigest()
 
@@ -47,6 +51,21 @@ class Workspace:
 
     def relative(self, resolved: Path) -> str:
         return resolved.relative_to(self.root).as_posix()
+
+    def capture(self) -> dict[str, bytes]:
+        self.root.stat()
+        if not self.root.is_dir():
+            raise NotADirectoryError(self.root)
+        contents = {}
+        for path in sorted(self.root.rglob("*")):
+            relative = path.relative_to(self.root).as_posix()
+            if path.is_symlink():
+                raise WorkspaceError(f"Symlinks are not allowed in the workspace: {relative}")
+            elif path.is_file():
+                contents[relative] = path.read_bytes()
+            elif not path.is_dir():
+                raise WorkspaceError(f"Unsupported workspace entry: {relative}")
+        return contents
 
     def _check_size(self, incoming: str, replacing: Path) -> None:
         total = sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
@@ -102,7 +121,7 @@ class Workspace:
 
         current = self.read_snapshot(self.relative(resolved))
         if current.content_hash != expected_hash:
-            raise WorkspaceError(f"File changed after it was read: {path!r}")
+            raise FileConflictError(f"File changed on disk since it was loaded: {path!r}. Your edits were not saved.")
 
         self._check_size(modified, resolved)
         resolved.write_text(modified, encoding="utf-8")

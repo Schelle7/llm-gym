@@ -4,8 +4,8 @@ The boundary is a bubblewrap namespace, not a path check. `workspace.resolve()`
 decides which file may be *named* and stops mattering the moment python starts;
 everything after that is this module's job.
 
-Nothing inside is writable. Printing still works because stdout and stderr are
-inherited pipes rather than files, and they are the whole return channel: a
+Mounted host directories are read-only. Printing works because stdout and
+stderr are inherited pipes rather than files, and they are the return channel: a
 script cannot leave a result behind on disk for someone to pick up later. That
 is also why `_drain` caps output as it reads rather than afterwards. The cap
 exists so a runaway script never occupies server memory in the first place,
@@ -78,7 +78,7 @@ def run(script: str) -> RunResult:
     started = time.monotonic()
     deadline = started + SANDBOX_TIMEOUT_SECONDS
     process = subprocess.Popen(
-        _argv(script),
+        _bubblewrap_command(script),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         # Nothing is going to answer a prompt, and an inherited stdin would be
@@ -111,7 +111,7 @@ def run(script: str) -> RunResult:
     )
 
 
-def _argv(script: str) -> list[str]:
+def _bubblewrap_command(script: str) -> list[str]:
     """The sandbox, as bubblewrap flags.
 
     Order is load-bearing twice over: --clearenv wipes the environment, so the
@@ -140,9 +140,7 @@ def _argv(script: str) -> list[str]:
         "--die-with-parent",
         "--new-session",
         "--clearenv",
-        # No writable path exists anywhere inside, so a library reaching for a
-        # home directory should fail where it asks rather than quietly landing
-        # somewhere unexpected.
+        # A library needing a home directory must not use the host user's home.
         "--setenv",
         "HOME",
         "/nonexistent",
@@ -169,8 +167,7 @@ def _limits() -> None:
     """
     resource.setrlimit(resource.RLIMIT_AS, (SANDBOX_ADDRESS_SPACE_BYTES, SANDBOX_ADDRESS_SPACE_BYTES))
     resource.setrlimit(resource.RLIMIT_CPU, (SANDBOX_CPU_SECONDS, SANDBOX_CPU_SECONDS))
-    # Nothing is writable, so this changes no outcome today. It is the policy
-    # written where it still holds if a writable mount is ever added.
+    # Read-only host mounts do not cover sandbox-local mounts such as /dev.
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
     # RLIMIT_NPROC deliberately absent. It counts against the real uid in the
     # namespace this runs in, which is still the desktop session's -- a cap
@@ -186,8 +183,9 @@ def _drain(process: subprocess.Popen, deadline: float) -> tuple[dict[str, bytear
     Both at once, because a script filling one pipe while the parent blocks on
     the other deadlocks with neither side able to move.
 
-    Past the cap the bytes are read and dropped rather than the script being
-    killed. Draining keeps the pipe moving, so a chatty script still reaches
+    Past the cap the oldest bytes are dropped rather than the script being
+    killed. Keeping the tail preserves the final exception in a traceback.
+    Draining keeps the pipe moving, so a chatty script still reaches
     its own end and still reports an exit code, which is often the only part
     worth having.
     """
@@ -208,10 +206,10 @@ def _drain(process: subprocess.Popen, deadline: float) -> tuple[dict[str, bytear
                     selector.unregister(key.fileobj)
                     continue
                 buffer = collected[key.data]
-                room = SANDBOX_OUTPUT_BYTES - len(buffer)
-                if len(chunk) > room:
+                if len(buffer) + len(chunk) > SANDBOX_OUTPUT_BYTES:
                     truncated = True
-                buffer += chunk[:room]
+                buffer += chunk
+                del buffer[:-SANDBOX_OUTPUT_BYTES]
 
     return collected, truncated, False
 

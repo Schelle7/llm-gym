@@ -1,10 +1,13 @@
 from langchain_core.tools import tool
 from langchain_tavily import TavilyExtract, TavilySearch
+from langgraph.prebuilt import ToolRuntime
 from langgraph.types import interrupt
 
 from llm_gym import sandbox
 from llm_gym.config import SEARCH_MAX_RESULTS, WORKSPACE_ROOT
+from llm_gym.snapshots import snapshots
 from llm_gym.workspace import Workspace, WorkspaceError
+from llm_gym.workspace_changes import WorkspaceChangedError, require_unchanged
 
 workspace = Workspace(root=WORKSPACE_ROOT)
 
@@ -16,6 +19,12 @@ web_search = TavilySearch(max_results=SEARCH_MAX_RESULTS)
 # caps it: the header gauge is where that shows up, and hiding the cost would
 # defeat the point of watching it.
 fetch_page = TavilyExtract(extract_depth="basic")
+
+
+def check_approved_workspace(runtime: ToolRuntime, decision: dict) -> None:
+    thread_id = runtime.config["configurable"]["thread_id"]
+    approved = snapshots.load(thread_id, decision["workspace_snapshot_id"])
+    require_unchanged(approved, workspace.capture(), "since approval; operation cancelled")
 
 
 @tool
@@ -49,7 +58,7 @@ def read_file(path: str):
 
 
 @tool
-def create_file(path: str, content: str):
+def create_file(path: str, content: str, runtime: ToolRuntime):
     """Propose creating a NEW file, for human approval.
 
     Fails if the file already exists -- use propose_edit for that. Missing
@@ -65,6 +74,7 @@ def create_file(path: str, content: str):
     decision = interrupt(
         {
             "kind": "create_file",
+            "workspace_snapshot_id": runtime.state["messages"][-1].response_metadata["workspace_snapshot_id"],
             "path": path,
             "content_hash": "",
             "original": "",
@@ -83,9 +93,15 @@ def create_file(path: str, content: str):
         }
 
     try:
+        check_approved_workspace(runtime, decision)
         created = workspace.create(path, content)
     except WorkspaceError as error:
-        return {"status": "failed", "path": path, "detail": str(error)}
+        return {
+            "status": "failed",
+            "path": path,
+            "detail": str(error),
+            "workspace_changed": isinstance(error, WorkspaceChangedError),
+        }
 
     return {
         "status": "accepted",
@@ -95,7 +111,7 @@ def create_file(path: str, content: str):
 
 
 @tool
-def propose_edit(path: str, expected_hash: str, modified: str):
+def propose_edit(path: str, expected_hash: str, modified: str, runtime: ToolRuntime):
     """Propose replacing an existing file's content, for human approval.
 
     Pass the complete new file content as `modified` -- not a diff, not a
@@ -125,6 +141,7 @@ def propose_edit(path: str, expected_hash: str, modified: str):
     decision = interrupt(
         {
             "kind": "propose_edit",
+            "workspace_snapshot_id": runtime.state["messages"][-1].response_metadata["workspace_snapshot_id"],
             "path": snapshot.path,
             "content_hash": snapshot.content_hash,
             "original": snapshot.content,
@@ -145,13 +162,19 @@ def propose_edit(path: str, expected_hash: str, modified: str):
         }
 
     try:
+        check_approved_workspace(runtime, decision)
         updated = workspace.apply_change(
             path=snapshot.path,
             expected_hash=expected_hash,
             modified=modified,
         )
     except WorkspaceError as error:
-        return {"status": "failed", "path": snapshot.path, "detail": str(error)}
+        return {
+            "status": "failed",
+            "path": snapshot.path,
+            "detail": str(error),
+            "workspace_changed": isinstance(error, WorkspaceChangedError),
+        }
 
     return {
         "status": "accepted",
@@ -161,14 +184,14 @@ def propose_edit(path: str, expected_hash: str, modified: str):
 
 
 @tool
-def run_python(path: str):
+def run_python(path: str, runtime: ToolRuntime):
     """Run a Python file that already exists in the workspace, for human approval.
 
     Write the file with create_file first, then run it by path. The human is
     shown the code and decides; nothing executes until they accept.
-    If the file changed since review, execution is refused.
+    If any workspace file changed since review, execution is refused.
 
-    It runs with no network and no writable filesystem, so it cannot install
+    It runs with no network and read-only host mounts, so it cannot install
     packages, download anything, or save its results to a file. Only the
     standard library and packages already installed can be imported. Print
     what you want to see: stdout and stderr are the only results that come
@@ -194,6 +217,7 @@ def run_python(path: str):
     decision = interrupt(
         {
             "kind": "run_python",
+            "workspace_snapshot_id": runtime.state["messages"][-1].response_metadata["workspace_snapshot_id"],
             "path": snapshot.path,
             "content_hash": snapshot.content_hash,
             # No before-and-after to show. The browser reads this kind as code
@@ -213,13 +237,15 @@ def run_python(path: str):
             ),
         }
 
-    if snapshot.content_hash != decision["content_hash"]:
+    try:
+        check_approved_workspace(runtime, decision)
+    except WorkspaceError as error:
         return {
             "status": "failed",
             "path": snapshot.path,
-            "detail": "File changed after it was shown for approval. Nothing was executed. Request a new review.",
+            "detail": str(error),
+            "workspace_changed": isinstance(error, WorkspaceChangedError),
         }
-
     result = sandbox.run(snapshot.path)
     # A traceback, a non-zero exit and a timeout are all reported as a run that
     # happened. Calling them failures would tell the model the tool broke, when

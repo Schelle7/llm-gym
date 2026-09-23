@@ -8,7 +8,7 @@ def stamp() -> dict[str, str | bool]:
     """What produced a reply besides the model: the code, and the moment."""
     return {
         "commit": _git("rev-parse", "HEAD"),
-        "dirty": _git("status", "--porcelain", "--untracked-files=no") != "",
+        "dirty": _git("status", "--porcelain", "--untracked-files=all") != "",
         "called_at": datetime.now(UTC).isoformat(),
     }
 

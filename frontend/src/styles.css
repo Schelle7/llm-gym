@@ -253,6 +253,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   line-height: 1.5;
 }
 .notice button { display: grid; place-items: center; color: inherit; background: transparent; }
+.notice .reload-file { flex-shrink: 0; padding: 4px 8px; border: 1px solid currentColor; }
 
 /* Provisional output, dashed to say so. Capped at roughly five lines, with
    the scroll pinned to the bottom so the top scrolls away instead. */

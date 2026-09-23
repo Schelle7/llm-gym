@@ -1,7 +1,10 @@
 CONDA_ENV := llm-gym
 PYTHON_VERSION := 3.12
 
-.PHONY: install generate-api dev dev-backend dev-frontend lint fix
+.PHONY: install generate-api dev dev-backend dev-frontend lint fix check-db
+
+check-db:
+	python -m llm_gym.check_db
 
 install:
 	@conda run -n $(CONDA_ENV) python --version >/dev/null 2>&1 || conda create -n $(CONDA_ENV) python=$(PYTHON_VERSION) -y

@@ -93,6 +93,8 @@ export async function fetchFile(path?: string): Promise<FileSnapshot> {
   return response.json() as Promise<FileSnapshot>;
 }
 
+export class FileConflictError extends Error {}
+
 export async function putFile(
   path: string,
   expectedHash: string,
@@ -108,6 +110,10 @@ export async function putFile(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
+  if (response.status === 409) {
+    const body: { detail: string } = await response.json();
+    throw new FileConflictError(body.detail);
+  }
   if (!response.ok) {
     throw new Error(`Unable to save file: ${response.status}`);
   }
