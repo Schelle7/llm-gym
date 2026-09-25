@@ -1,7 +1,10 @@
 CONDA_ENV := llm-gym
 PYTHON_VERSION := 3.12
 
-.PHONY: install generate-api dev dev-backend dev-frontend lint fix check-db
+.PHONY: install generate-api dev dev-backend dev-frontend lint fix check-db test
+
+test:
+	pytest -v
 
 check-db:
 	python -m llm_gym.check_db

@@ -13,13 +13,15 @@ dependencies = [
     "langchain-tavily>=0.2",
     "langgraph>=1.0",
     "langgraph-checkpoint-sqlite>=3.0",
-    "langsmith",
     "ollama",
     "uvicorn>=0.35",
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.9"]
+dev = ["pytest", "ruff>=0.9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120

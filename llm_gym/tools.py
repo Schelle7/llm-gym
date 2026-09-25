@@ -10,14 +10,7 @@ from llm_gym.workspace import Workspace, WorkspaceError
 from llm_gym.workspace_changes import WorkspaceChangedError, require_unchanged
 
 workspace = Workspace(root=WORKSPACE_ROOT)
-
-# Reads TAVILY_API_KEY and raises here if it is absent, so a missing key stops
-# the server rather than surfacing as a failed tool call mid-conversation.
 web_search = TavilySearch(max_results=SEARCH_MAX_RESULTS)
-
-# Whole pages, so this is the tool that fills a context window. Nothing here
-# caps it: the header gauge is where that shows up, and hiding the cost would
-# defeat the point of watching it.
 fetch_page = TavilyExtract(extract_depth="basic")
 
 
